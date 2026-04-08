@@ -2,6 +2,8 @@
 
 一个基于 Bun、React、TypeScript、Tailwind 和 Radix UI 的前端工具，用来把图片转换成拼豆图纸，并支持在网页里继续编辑结果。
 
+在线演示：https://yooooo.us/beads
+
 ## 项目特点
 
 - 全部处理都在浏览器内完成，不依赖后端服务
@@ -44,6 +46,14 @@ bun run dev
 ```bash
 bun run build
 ```
+
+如需部署到非根路径，可在构建前指定基础路径：
+
+```bash
+PINDOU_BASE_PATH=/your/sub/path bun run build
+```
+
+不指定时会默认使用相对路径构建，适合直接部署到子目录。
 
 本地预览构建结果：
 
@@ -127,4 +137,3 @@ src/
 - 自动识别并不是对所有图片都百分之百准确
 - 遇到复杂图片时，手动网格通常更稳定
 - 浏览器端图像处理会占用一定内存，超大图片可能会比较慢
-
