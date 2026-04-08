@@ -7,6 +7,7 @@ const GRID_SEPARATOR_COLOR = "#C9C4BC";
 const BOARD_FRAME_COLOR = "#111111";
 const CANVAS_BACKGROUND = "#F7F4EE";
 const OMITTED_BACKGROUND_HEX = "#FFFFFF";
+const MAX_DETECTION_EDGE = 1024;
 const BRAND_NAME = "拼豆豆";
 
 type Segment = [number, number];
@@ -119,6 +120,11 @@ export interface AutoDetectionDebugResult {
   chartFrameDetected?: boolean;
   chartLegendDetected?: boolean;
   chartLayoutAccepted?: boolean;
+  wholeLegendTop?: number | null;
+  wholeDirectCandidateMode?: string | null;
+  wholeDirectCandidateGrid?: [number, number] | null;
+  wholeDirectCandidateCrop?: [number, number, number, number] | null;
+  wholeSeparatorBoardBox?: [number, number, number, number] | null;
   trimmedContentBox?: [number, number, number, number] | null;
   trimmedLegendTop?: number | null;
   trimmedLegendCandidateMode?: string | null;
@@ -132,6 +138,12 @@ export interface AutoDetectionDebugResult {
   trimmedConnectedBox?: [number, number, number, number] | null;
   trimmedHoughGrid?: [number, number] | null;
   trimmedHoughCrop?: [number, number, number, number] | null;
+  trimmedSeparatorFamilyMode?: string | null;
+  trimmedSeparatorFamilyGrid?: [number, number] | null;
+  trimmedSeparatorFamilyCrop?: [number, number, number, number] | null;
+  trimmedConnectedFamilyMode?: string | null;
+  trimmedConnectedFamilyGrid?: [number, number] | null;
+  trimmedConnectedFamilyCrop?: [number, number, number, number] | null;
 }
 
 export interface AutoDetectionDebugInput {
@@ -178,6 +190,12 @@ interface ChartImportDetection {
 interface FrameBoxDetection {
   outer: CropBox;
   inner: CropBox;
+}
+
+interface DetectionPreparation {
+  raster: RasterImage;
+  scaleX: number;
+  scaleY: number;
 }
 
 function buildPaletteDefinition(
@@ -316,16 +334,20 @@ export async function processImageFile(
   let detectedCropRect: NormalizedCropRect | null = null;
 
   if (options.gridMode === "auto") {
-    const chartImport = detectChartLikePixelArt(source, file.name);
+    const chartImport = detectChartLikePixelArtPrepared(source, file.name);
     if (chartImport) {
-      logical = chartImport.logical;
+      logical = sampleRegularGrid(
+        cropRaster(source, chartImport.cropBox),
+        chartImport.gridWidth,
+        chartImport.gridHeight,
+      );
       gridWidth = chartImport.gridWidth;
       gridHeight = chartImport.gridHeight;
       detectionMode = chartImport.mode;
       preferredEditorMode = "pindou";
       detectedCropRect = cropBoxToNormalizedCropRect(source.width, source.height, chartImport.cropBox);
     } else {
-      const detection = detectPixelArt(source);
+      const detection = detectPixelArtPrepared(source);
       if (!detection) {
         throw new Error(processMessages.nonPixelArtError);
       }
@@ -346,7 +368,7 @@ export async function processImageFile(
       detectedCropRect = cropBoxToNormalizedCropRect(source.width, source.height, detection.cropBox);
     }
 
-    if (preferredEditorMode !== "pindou" && shouldDefaultToPindouMode(source, file.name)) {
+    if (preferredEditorMode !== "pindou" && shouldDefaultToPindouModePrepared(source, file.name)) {
       preferredEditorMode = "pindou";
     }
   } else {
@@ -413,21 +435,76 @@ export async function processImageFile(
 export function debugAutoDetectRaster(
   image: AutoDetectionDebugInput,
   fileName: string,
+  options?: { detailed?: boolean },
 ): AutoDetectionDebugResult {
   const raster: RasterImage = {
     width: image.width,
     height: image.height,
     data: image.data,
   };
-  const frameBox = detectDarkFrameBox(raster);
-  const trimmedContentBox = detectLooseContentBox(raster);
+  const prepared = prepareDetectionRaster(raster);
+  const debugRaster = prepared.raster;
+  const mapDebugCrop = (cropBox: CropBox | null) =>
+    cropBox ? mapPreparedCropBoxToSource(cropBox, raster, prepared) : null;
+  const mapDebugY = (value: number | null) =>
+    value === null ? null : Math.round(value * prepared.scaleY);
+  const detailed = options?.detailed ?? false;
+
+  const chartImport = detectChartLikePixelArtPrepared(raster, fileName);
+  const detection = chartImport ? null : detectPixelArtPrepared(raster);
+  const preferredEditorMode = chartImport || shouldDefaultToPindouModePrepared(raster, fileName)
+    ? "pindou"
+    : "edit";
+
+  if (!detailed) {
+    if (chartImport) {
+      const cropWidth = chartImport.cropBox[2] - chartImport.cropBox[0];
+      const cropHeight = chartImport.cropBox[3] - chartImport.cropBox[1];
+      return {
+        mode: chartImport.mode,
+        gridWidth: chartImport.gridWidth,
+        gridHeight: chartImport.gridHeight,
+        cropBox: chartImport.cropBox,
+        cropRatio: cropWidth / Math.max(1, cropHeight),
+        preferredEditorMode: "pindou",
+      };
+    }
+
+    if (!detection) {
+      return {
+        mode: "none",
+        gridWidth: 0,
+        gridHeight: 0,
+        cropBox: null,
+        cropRatio: null,
+        preferredEditorMode,
+      };
+    }
+
+    const cropWidth = detection.cropBox[2] - detection.cropBox[0];
+    const cropHeight = detection.cropBox[3] - detection.cropBox[1];
+    return {
+      mode: detection.mode,
+      gridWidth: detection.gridWidth,
+      gridHeight: detection.gridHeight,
+      cropBox: detection.cropBox,
+      cropRatio: cropWidth / Math.max(1, cropHeight),
+      preferredEditorMode,
+    };
+  }
+
+  const frameBox = detectDarkFrameBox(debugRaster);
+  const wholeLegendTop = detectLegendTop(debugRaster);
+  const wholeDirectCandidate = detectBestLegendBoardCandidate(debugRaster);
+  const wholeSeparatorBoardBox = detectLightSeparatorBoardBox(debugRaster);
+  const trimmedContentBox = detectLooseContentBox(debugRaster);
   const trimmedLegendTop = trimmedContentBox
-    ? detectLegendTop(cropRaster(raster, trimmedContentBox))
+    ? detectLegendTop(cropRaster(debugRaster, trimmedContentBox))
     : null;
   const trimmedLegendCandidate =
     trimmedContentBox && trimmedLegendTop !== null
       ? detectBestLegendBoardCandidate(
-          cropRaster(cropRaster(raster, trimmedContentBox), [
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
             0,
             0,
             trimmedContentBox[2] - trimmedContentBox[0],
@@ -438,7 +515,7 @@ export function debugAutoDetectRaster(
   const trimmedSeparatorBoardBox =
     trimmedContentBox && trimmedLegendTop !== null
       ? detectLightSeparatorBoardBox(
-          cropRaster(cropRaster(raster, trimmedContentBox), [
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
             0,
             0,
             trimmedContentBox[2] - trimmedContentBox[0],
@@ -449,7 +526,7 @@ export function debugAutoDetectRaster(
   const trimmedBoardDetection =
     trimmedContentBox && trimmedLegendTop !== null
       ? (() => {
-          const boardRegion = cropRaster(cropRaster(raster, trimmedContentBox), [
+          const boardRegion = cropRaster(cropRaster(debugRaster, trimmedContentBox), [
             0,
             0,
             trimmedContentBox[2] - trimmedContentBox[0],
@@ -466,7 +543,7 @@ export function debugAutoDetectRaster(
   const trimmedDenseBandBox =
     trimmedContentBox && trimmedLegendTop !== null
       ? detectDenseLooseContentBandBox(
-          cropRaster(cropRaster(raster, trimmedContentBox), [
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
             0,
             0,
             trimmedContentBox[2] - trimmedContentBox[0],
@@ -477,7 +554,7 @@ export function debugAutoDetectRaster(
   const trimmedConnectedBox =
     trimmedContentBox && trimmedLegendTop !== null
       ? detectLargestLooseContentComponentBox(
-          cropRaster(cropRaster(raster, trimmedContentBox), [
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
             0,
             0,
             trimmedContentBox[2] - trimmedContentBox[0],
@@ -488,7 +565,7 @@ export function debugAutoDetectRaster(
   const trimmedHoughDetection =
     trimmedContentBox && trimmedLegendTop !== null
       ? detectOrthogonalHoughChartBoard(
-          cropRaster(cropRaster(raster, trimmedContentBox), [
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
             0,
             0,
             trimmedContentBox[2] - trimmedContentBox[0],
@@ -496,14 +573,37 @@ export function debugAutoDetectRaster(
           ]),
         )
       : null;
+  const trimmedSeparatorFamilyDetection =
+    trimmedContentBox && trimmedLegendTop !== null && trimmedSeparatorBoardBox
+      ? detectLegendBoardFromCandidateBox(
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
+            0,
+            0,
+            trimmedContentBox[2] - trimmedContentBox[0],
+            trimmedLegendTop,
+          ]),
+          trimmedSeparatorBoardBox,
+        )
+      : null;
+  const trimmedConnectedFamilyDetection =
+    trimmedContentBox && trimmedLegendTop !== null && trimmedConnectedBox
+      ? detectLegendBoardFromCandidateBox(
+          cropRaster(cropRaster(debugRaster, trimmedContentBox), [
+            0,
+            0,
+            trimmedContentBox[2] - trimmedContentBox[0],
+            trimmedLegendTop,
+          ]),
+          trimmedConnectedBox,
+        )
+      : null;
   const legendRegion = frameBox
-    ? cropRaster(raster, [0, frameBox.outer[3], raster.width, raster.height])
+    ? cropRaster(debugRaster, [0, frameBox.outer[3], debugRaster.width, debugRaster.height])
     : null;
   const chartLegendDetected = legendRegion ? looksLikeChartLegend(legendRegion) : false;
   const chartLayoutAccepted = frameBox && legendRegion
-    ? isPlausibleChartImportLayout(raster, frameBox, legendRegion, fileName)
+    ? isPlausibleChartImportLayout(debugRaster, frameBox, legendRegion, fileName)
     : false;
-  const chartImport = detectChartLikePixelArt(raster, fileName);
   if (chartImport) {
     const cropWidth = chartImport.cropBox[2] - chartImport.cropBox[0];
     const cropHeight = chartImport.cropBox[3] - chartImport.cropBox[1];
@@ -517,30 +617,45 @@ export function debugAutoDetectRaster(
       chartFrameDetected: Boolean(frameBox),
       chartLegendDetected,
       chartLayoutAccepted,
-      trimmedContentBox,
-      trimmedLegendTop,
+      wholeLegendTop: mapDebugY(wholeLegendTop),
+      wholeDirectCandidateMode: wholeDirectCandidate?.mode ?? null,
+      wholeDirectCandidateGrid: wholeDirectCandidate
+        ? [wholeDirectCandidate.gridWidth, wholeDirectCandidate.gridHeight]
+        : null,
+      wholeDirectCandidateCrop: mapDebugCrop(wholeDirectCandidate?.cropBox ?? null),
+      wholeSeparatorBoardBox: mapDebugCrop(wholeSeparatorBoardBox),
+      trimmedContentBox: mapDebugCrop(trimmedContentBox),
+      trimmedLegendTop: mapDebugY(trimmedLegendTop),
       trimmedLegendCandidateMode: trimmedLegendCandidate?.mode ?? null,
       trimmedLegendCandidateGrid: trimmedLegendCandidate
         ? [trimmedLegendCandidate.gridWidth, trimmedLegendCandidate.gridHeight]
         : null,
-      trimmedLegendCandidateCrop: trimmedLegendCandidate?.cropBox ?? null,
-      trimmedSeparatorBoardBox,
+      trimmedLegendCandidateCrop: mapDebugCrop(trimmedLegendCandidate?.cropBox ?? null),
+      trimmedSeparatorBoardBox: mapDebugCrop(trimmedSeparatorBoardBox),
       trimmedBoardDetectionMode: trimmedBoardDetection?.mode ?? null,
       trimmedBoardDetectionGrid: trimmedBoardDetection
         ? [trimmedBoardDetection.gridWidth, trimmedBoardDetection.gridHeight]
         : null,
-      trimmedBoardDetectionCrop: trimmedBoardDetection?.cropBox ?? null,
-      trimmedDenseBandBox,
-      trimmedConnectedBox,
+      trimmedBoardDetectionCrop: mapDebugCrop(trimmedBoardDetection?.cropBox ?? null),
+      trimmedDenseBandBox: mapDebugCrop(trimmedDenseBandBox),
+      trimmedConnectedBox: mapDebugCrop(trimmedConnectedBox),
       trimmedHoughGrid: trimmedHoughDetection
         ? [trimmedHoughDetection.gridWidth, trimmedHoughDetection.gridHeight]
         : null,
-      trimmedHoughCrop: trimmedHoughDetection?.cropBox ?? null,
+      trimmedHoughCrop: mapDebugCrop(trimmedHoughDetection?.cropBox ?? null),
+      trimmedSeparatorFamilyMode: trimmedSeparatorFamilyDetection?.mode ?? null,
+      trimmedSeparatorFamilyGrid: trimmedSeparatorFamilyDetection
+        ? [trimmedSeparatorFamilyDetection.gridWidth, trimmedSeparatorFamilyDetection.gridHeight]
+        : null,
+      trimmedSeparatorFamilyCrop: mapDebugCrop(trimmedSeparatorFamilyDetection?.cropBox ?? null),
+      trimmedConnectedFamilyMode: trimmedConnectedFamilyDetection?.mode ?? null,
+      trimmedConnectedFamilyGrid: trimmedConnectedFamilyDetection
+        ? [trimmedConnectedFamilyDetection.gridWidth, trimmedConnectedFamilyDetection.gridHeight]
+        : null,
+      trimmedConnectedFamilyCrop: mapDebugCrop(trimmedConnectedFamilyDetection?.cropBox ?? null),
     };
   }
 
-  const detection = detectPixelArt(raster);
-  const preferredEditorMode = shouldDefaultToPindouMode(raster, fileName) ? "pindou" : "edit";
   if (!detection) {
     return {
       mode: "none",
@@ -552,25 +667,42 @@ export function debugAutoDetectRaster(
       chartFrameDetected: Boolean(frameBox),
       chartLegendDetected,
       chartLayoutAccepted,
-      trimmedContentBox,
-      trimmedLegendTop,
+      wholeLegendTop: mapDebugY(wholeLegendTop),
+      wholeDirectCandidateMode: wholeDirectCandidate?.mode ?? null,
+      wholeDirectCandidateGrid: wholeDirectCandidate
+        ? [wholeDirectCandidate.gridWidth, wholeDirectCandidate.gridHeight]
+        : null,
+      wholeDirectCandidateCrop: mapDebugCrop(wholeDirectCandidate?.cropBox ?? null),
+      wholeSeparatorBoardBox: mapDebugCrop(wholeSeparatorBoardBox),
+      trimmedContentBox: mapDebugCrop(trimmedContentBox),
+      trimmedLegendTop: mapDebugY(trimmedLegendTop),
       trimmedLegendCandidateMode: trimmedLegendCandidate?.mode ?? null,
       trimmedLegendCandidateGrid: trimmedLegendCandidate
         ? [trimmedLegendCandidate.gridWidth, trimmedLegendCandidate.gridHeight]
         : null,
-      trimmedLegendCandidateCrop: trimmedLegendCandidate?.cropBox ?? null,
-      trimmedSeparatorBoardBox,
+      trimmedLegendCandidateCrop: mapDebugCrop(trimmedLegendCandidate?.cropBox ?? null),
+      trimmedSeparatorBoardBox: mapDebugCrop(trimmedSeparatorBoardBox),
       trimmedBoardDetectionMode: trimmedBoardDetection?.mode ?? null,
       trimmedBoardDetectionGrid: trimmedBoardDetection
         ? [trimmedBoardDetection.gridWidth, trimmedBoardDetection.gridHeight]
         : null,
-      trimmedBoardDetectionCrop: trimmedBoardDetection?.cropBox ?? null,
-      trimmedDenseBandBox,
-      trimmedConnectedBox,
+      trimmedBoardDetectionCrop: mapDebugCrop(trimmedBoardDetection?.cropBox ?? null),
+      trimmedDenseBandBox: mapDebugCrop(trimmedDenseBandBox),
+      trimmedConnectedBox: mapDebugCrop(trimmedConnectedBox),
       trimmedHoughGrid: trimmedHoughDetection
         ? [trimmedHoughDetection.gridWidth, trimmedHoughDetection.gridHeight]
         : null,
-      trimmedHoughCrop: trimmedHoughDetection?.cropBox ?? null,
+      trimmedHoughCrop: mapDebugCrop(trimmedHoughDetection?.cropBox ?? null),
+      trimmedSeparatorFamilyMode: trimmedSeparatorFamilyDetection?.mode ?? null,
+      trimmedSeparatorFamilyGrid: trimmedSeparatorFamilyDetection
+        ? [trimmedSeparatorFamilyDetection.gridWidth, trimmedSeparatorFamilyDetection.gridHeight]
+        : null,
+      trimmedSeparatorFamilyCrop: mapDebugCrop(trimmedSeparatorFamilyDetection?.cropBox ?? null),
+      trimmedConnectedFamilyMode: trimmedConnectedFamilyDetection?.mode ?? null,
+      trimmedConnectedFamilyGrid: trimmedConnectedFamilyDetection
+        ? [trimmedConnectedFamilyDetection.gridWidth, trimmedConnectedFamilyDetection.gridHeight]
+        : null,
+      trimmedConnectedFamilyCrop: mapDebugCrop(trimmedConnectedFamilyDetection?.cropBox ?? null),
     };
   }
 
@@ -586,25 +718,42 @@ export function debugAutoDetectRaster(
     chartFrameDetected: Boolean(frameBox),
     chartLegendDetected,
     chartLayoutAccepted,
-    trimmedContentBox,
-    trimmedLegendTop,
+    wholeLegendTop: mapDebugY(wholeLegendTop),
+    wholeDirectCandidateMode: wholeDirectCandidate?.mode ?? null,
+    wholeDirectCandidateGrid: wholeDirectCandidate
+      ? [wholeDirectCandidate.gridWidth, wholeDirectCandidate.gridHeight]
+      : null,
+    wholeDirectCandidateCrop: mapDebugCrop(wholeDirectCandidate?.cropBox ?? null),
+    wholeSeparatorBoardBox: mapDebugCrop(wholeSeparatorBoardBox),
+    trimmedContentBox: mapDebugCrop(trimmedContentBox),
+    trimmedLegendTop: mapDebugY(trimmedLegendTop),
     trimmedLegendCandidateMode: trimmedLegendCandidate?.mode ?? null,
     trimmedLegendCandidateGrid: trimmedLegendCandidate
       ? [trimmedLegendCandidate.gridWidth, trimmedLegendCandidate.gridHeight]
       : null,
-    trimmedLegendCandidateCrop: trimmedLegendCandidate?.cropBox ?? null,
-    trimmedSeparatorBoardBox,
+    trimmedLegendCandidateCrop: mapDebugCrop(trimmedLegendCandidate?.cropBox ?? null),
+    trimmedSeparatorBoardBox: mapDebugCrop(trimmedSeparatorBoardBox),
     trimmedBoardDetectionMode: trimmedBoardDetection?.mode ?? null,
     trimmedBoardDetectionGrid: trimmedBoardDetection
       ? [trimmedBoardDetection.gridWidth, trimmedBoardDetection.gridHeight]
       : null,
-    trimmedBoardDetectionCrop: trimmedBoardDetection?.cropBox ?? null,
-    trimmedDenseBandBox,
-    trimmedConnectedBox,
+    trimmedBoardDetectionCrop: mapDebugCrop(trimmedBoardDetection?.cropBox ?? null),
+    trimmedDenseBandBox: mapDebugCrop(trimmedDenseBandBox),
+    trimmedConnectedBox: mapDebugCrop(trimmedConnectedBox),
     trimmedHoughGrid: trimmedHoughDetection
       ? [trimmedHoughDetection.gridWidth, trimmedHoughDetection.gridHeight]
       : null,
-    trimmedHoughCrop: trimmedHoughDetection?.cropBox ?? null,
+    trimmedHoughCrop: mapDebugCrop(trimmedHoughDetection?.cropBox ?? null),
+    trimmedSeparatorFamilyMode: trimmedSeparatorFamilyDetection?.mode ?? null,
+    trimmedSeparatorFamilyGrid: trimmedSeparatorFamilyDetection
+      ? [trimmedSeparatorFamilyDetection.gridWidth, trimmedSeparatorFamilyDetection.gridHeight]
+      : null,
+    trimmedSeparatorFamilyCrop: mapDebugCrop(trimmedSeparatorFamilyDetection?.cropBox ?? null),
+    trimmedConnectedFamilyMode: trimmedConnectedFamilyDetection?.mode ?? null,
+    trimmedConnectedFamilyGrid: trimmedConnectedFamilyDetection
+      ? [trimmedConnectedFamilyDetection.gridWidth, trimmedConnectedFamilyDetection.gridHeight]
+      : null,
+    trimmedConnectedFamilyCrop: mapDebugCrop(trimmedConnectedFamilyDetection?.cropBox ?? null),
   };
 }
 
@@ -726,6 +875,104 @@ async function loadFileAsRaster(
   }
 }
 
+function prepareDetectionRaster(image: RasterImage): DetectionPreparation {
+  const maxEdge = Math.max(image.width, image.height);
+  if (maxEdge <= MAX_DETECTION_EDGE) {
+    return {
+      raster: image,
+      scaleX: 1,
+      scaleY: 1,
+    };
+  }
+
+  const scale = MAX_DETECTION_EDGE / maxEdge;
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const data = new Uint8ClampedArray(width * height * 4);
+  const sourceStepX = image.width / width;
+  const sourceStepY = image.height / height;
+
+  for (let targetY = 0; targetY < height; targetY += 1) {
+    const sourceY = Math.max(0, Math.min(image.height - 1, Math.round((targetY + 0.5) * sourceStepY - 0.5)));
+    for (let targetX = 0; targetX < width; targetX += 1) {
+      const sourceX = Math.max(0, Math.min(image.width - 1, Math.round((targetX + 0.5) * sourceStepX - 0.5)));
+      const sourceIndex = (sourceY * image.width + sourceX) * 4;
+      const targetIndex = (targetY * width + targetX) * 4;
+      data[targetIndex] = image.data[sourceIndex] ?? 0;
+      data[targetIndex + 1] = image.data[sourceIndex + 1] ?? 0;
+      data[targetIndex + 2] = image.data[sourceIndex + 2] ?? 0;
+      data[targetIndex + 3] = image.data[sourceIndex + 3] ?? 255;
+    }
+  }
+
+  return {
+    raster: {
+      width,
+      height,
+      data,
+    },
+    scaleX: image.width / width,
+    scaleY: image.height / height,
+  };
+}
+
+function mapPreparedCropBoxToSource(
+  cropBox: CropBox,
+  source: RasterImage,
+  prepared: DetectionPreparation,
+): CropBox {
+  if (prepared.scaleX === 1 && prepared.scaleY === 1) {
+    return cropBox;
+  }
+
+  return [
+    Math.max(0, Math.min(source.width - 1, Math.round(cropBox[0] * prepared.scaleX))),
+    Math.max(0, Math.min(source.height - 1, Math.round(cropBox[1] * prepared.scaleY))),
+    Math.max(1, Math.min(source.width, Math.round(cropBox[2] * prepared.scaleX))),
+    Math.max(1, Math.min(source.height, Math.round(cropBox[3] * prepared.scaleY))),
+  ];
+}
+
+function detectPixelArtPrepared(image: RasterImage): DetectionResult | null {
+  const prepared = prepareDetectionRaster(image);
+  const detection = detectPixelArt(prepared.raster);
+  if (!detection) {
+    return null;
+  }
+
+  return {
+    gridWidth: detection.gridWidth,
+    gridHeight: detection.gridHeight,
+    cropBox: mapPreparedCropBoxToSource(detection.cropBox, image, prepared),
+    mode: detection.mode,
+    xSegments: prepared.scaleX === 1 && prepared.scaleY === 1 ? detection.xSegments : undefined,
+    ySegments: prepared.scaleX === 1 && prepared.scaleY === 1 ? detection.ySegments : undefined,
+  };
+}
+
+function detectChartLikePixelArtPrepared(
+  image: RasterImage,
+  fileName?: string,
+): Omit<ChartImportDetection, "logical"> | null {
+  const prepared = prepareDetectionRaster(image);
+  const detection = detectChartLikePixelArt(prepared.raster, fileName);
+  if (!detection) {
+    return null;
+  }
+
+  return {
+    gridWidth: detection.gridWidth,
+    gridHeight: detection.gridHeight,
+    mode: detection.mode,
+    cropBox: mapPreparedCropBoxToSource(detection.cropBox, image, prepared),
+  };
+}
+
+function shouldDefaultToPindouModePrepared(image: RasterImage, fileName: string) {
+  const prepared = prepareDetectionRaster(image);
+  return shouldDefaultToPindouMode(prepared.raster, fileName);
+}
+
 function detectPixelArt(image: RasterImage): DetectionResult | null {
   const candidates = [
     detectRawPixelArt(image),
@@ -809,18 +1056,74 @@ function detectChartLikePixelArt(
     };
   }
 
+  const genericRectangularChart = detectGenericRectangularChartFrame(image);
+  if (genericRectangularChart) {
+    return genericRectangularChart;
+  }
+
   const trimmedContentBox = detectLooseContentBox(image);
   if (trimmedContentBox) {
-    const trimmedDetection = detectLegendSeparatedChart(cropRaster(image, trimmedContentBox));
+    const trimmedRegion = cropRaster(image, trimmedContentBox);
+    const trimmedDetection = detectLegendSeparatedChart(trimmedRegion);
     if (trimmedDetection) {
       return {
         ...trimmedDetection,
         cropBox: offsetCropBox(trimmedContentBox, trimmedDetection.cropBox),
       };
     }
+
+    const trimmedFramedDetection = detectBestLegendBoardCandidate(trimmedRegion);
+    if (trimmedFramedDetection) {
+      return {
+        ...trimmedFramedDetection,
+        cropBox: offsetCropBox(trimmedContentBox, trimmedFramedDetection.cropBox),
+      };
+    }
   }
 
   return detectLegendSeparatedChart(image);
+}
+
+function detectGenericRectangularChartFrame(image: RasterImage): ChartImportDetection | null {
+  const frameCrop = detectClosedRectangularBoardFrame(image);
+  if (!frameCrop) {
+    return null;
+  }
+
+  const legendRegion =
+    frameCrop[3] < image.height - 24
+      ? cropRaster(image, [0, frameCrop[3], image.width, image.height])
+      : null;
+  if (!legendRegion || !looksLikeChartLegend(legendRegion)) {
+    return null;
+  }
+
+  const boardRegion = cropRaster(image, frameCrop);
+  const boardDetection =
+    detectLightSeparatorPixelArt(boardRegion) ??
+    detectGridlinePixelArt(boardRegion) ??
+    detectGappedGridPixelArt(boardRegion) ??
+    detectBlockPixelArt(boardRegion);
+  if (!boardDetection || !isPlausibleLegendBoardDetection(boardRegion, boardDetection)) {
+    return null;
+  }
+
+  const logical =
+    boardDetection.xSegments && boardDetection.ySegments
+      ? sampleSegments(boardRegion, boardDetection.xSegments, boardDetection.ySegments)
+      : sampleRegularGrid(
+          cropRaster(boardRegion, boardDetection.cropBox),
+          boardDetection.gridWidth,
+          boardDetection.gridHeight,
+        );
+
+  return {
+    logical,
+    gridWidth: boardDetection.gridWidth,
+    gridHeight: boardDetection.gridHeight,
+    mode: `${boardDetection.mode}+generic-rect-frame`,
+    cropBox: offsetCropBox(frameCrop, boardDetection.cropBox),
+  };
 }
 
 function shouldDefaultToPindouMode(image: RasterImage, fileName: string) {
@@ -903,6 +1206,24 @@ function detectLegendSeparatedChart(image: RasterImage): ChartImportDetection | 
     return null;
   }
 
+  const candidateRegion = cropRaster(boardRegion, candidate.cropBox);
+  const candidateFrame = detectClosedRectangularBoardFrame(candidateRegion);
+  if (!candidateFrame) {
+    return null;
+  }
+  const candidateWidth = candidate.cropBox[2] - candidate.cropBox[0];
+  const candidateHeight = candidate.cropBox[3] - candidate.cropBox[1];
+  const maxHorizontalInset = Math.max(10, Math.round(candidateWidth * 0.08));
+  const maxVerticalInset = Math.max(10, Math.round(candidateHeight * 0.08));
+  if (
+    candidateFrame[0] > maxHorizontalInset ||
+    candidateWidth - candidateFrame[2] > maxHorizontalInset ||
+    candidateFrame[1] > maxVerticalInset ||
+    candidateHeight - candidateFrame[3] > maxVerticalInset
+  ) {
+    return null;
+  }
+
   return {
     logical: candidate.logical,
     gridWidth: candidate.gridWidth,
@@ -967,190 +1288,227 @@ function detectLooseContentBox(image: RasterImage): CropBox | null {
 }
 
 function detectBestLegendBoardCandidate(boardRegion: RasterImage) {
-  const houghBoardDetection = detectOrthogonalHoughChartBoard(boardRegion);
-  if (houghBoardDetection && isPlausibleLegendBoardDetection(boardRegion, houghBoardDetection)) {
-    const logical = sampleRegularGrid(
-      cropRaster(boardRegion, houghBoardDetection.cropBox),
-      houghBoardDetection.gridWidth,
-      houghBoardDetection.gridHeight,
-    );
+  const axisLabelBoard = detectLegendBoardFromAxisLabelsCandidate(boardRegion);
+  const looseContentBox = detectLooseContentBox(boardRegion);
+  const coreBoardBox = detectLegendBoardCoreCrop(boardRegion);
+  const innerBoardBox = detectLegendBoardInnerCrop(boardRegion);
+  const denseContentBandBox = detectDenseLooseContentBandBox(boardRegion);
+  const connectedBoardBox = detectLargestLooseContentComponentBox(boardRegion);
+  const separatorBoardBox = detectLightSeparatorBoardBox(boardRegion);
 
+  const candidates = [
+    axisLabelBoard,
+    looseContentBox ? detectLegendBoardFromCandidateBox(boardRegion, looseContentBox) : null,
+    coreBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, coreBoardBox) : null,
+    innerBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, innerBoardBox) : null,
+    separatorBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, separatorBoardBox) : null,
+    connectedBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, connectedBoardBox) : null,
+    denseContentBandBox ? detectLegendBoardFromCandidateBox(boardRegion, denseContentBandBox) : null,
+  ].filter((candidate): candidate is ChartImportDetection & { score: number } => Boolean(candidate));
+  if (candidates.length) {
+    const hybridCandidates = buildHybridLegendBoardCandidates(boardRegion, candidates);
+    const allCandidates = [...candidates, ...hybridCandidates];
+    allCandidates.sort((left, right) => right.score - left.score);
+    return allCandidates[0];
+  }
+  return null;
+}
+
+function detectLegendBoardFromAxisLabelsCandidate(
+  boardRegion: RasterImage,
+): (ChartImportDetection & { score: number }) | null {
+  const axisLabelBoard = detectLegendBoardFromAxisLabels(boardRegion);
+  if (!axisLabelBoard) {
+    return null;
+  }
+
+  const croppedBoard = cropRaster(boardRegion, axisLabelBoard.cropBox);
+  const boardInnerCrop =
+    detectLegendBoardCoreCrop(croppedBoard) ??
+    detectLegendBoardInnerCrop(croppedBoard) ??
+    detectLightSeparatorBoardBox(croppedBoard);
+  const refinedBoard = boardInnerCrop ? cropRaster(croppedBoard, boardInnerCrop) : croppedBoard;
+  const refined =
+    detectLightSeparatorPixelArt(refinedBoard) ??
+    detectGridlinePixelArt(refinedBoard) ??
+    detectGappedGridPixelArt(refinedBoard) ??
+    detectBlockPixelArt(refinedBoard);
+
+  if (refined && isPlausibleLegendBoardDetection(refinedBoard, refined)) {
+    const logical =
+      refined.xSegments && refined.ySegments
+        ? sampleSegments(refinedBoard, refined.xSegments, refined.ySegments)
+        : sampleRegularGrid(
+            cropRaster(refinedBoard, refined.cropBox),
+            refined.gridWidth,
+            refined.gridHeight,
+          );
+    const refinedCropBox = boardInnerCrop
+      ? offsetCropBox(boardInnerCrop, refined.cropBox)
+      : refined.cropBox;
+    const cropBox = offsetCropBox(axisLabelBoard.cropBox, refinedCropBox);
+    const detection: DetectionResult = {
+      gridWidth: refined.gridWidth,
+      gridHeight: refined.gridHeight,
+      cropBox,
+      mode: `${refined.mode}+legend-axis-labels`,
+    };
     return {
       logical,
-      gridWidth: houghBoardDetection.gridWidth,
-      gridHeight: houghBoardDetection.gridHeight,
-      mode: `${houghBoardDetection.mode}+legend-hough`,
-      cropBox: houghBoardDetection.cropBox,
-      score: Number.POSITIVE_INFINITY,
+      gridWidth: detection.gridWidth,
+      gridHeight: detection.gridHeight,
+      mode: detection.mode,
+      cropBox,
+      score: scoreLegendBoardCandidate(boardRegion, detection) + 10,
     };
   }
 
-  const denseContentBandBox = detectDenseLooseContentBandBox(boardRegion);
-  if (denseContentBandBox) {
-    const denseContentRegion = cropRaster(boardRegion, denseContentBandBox);
-    const denseContentDetection =
-      detectLightSeparatorPixelArt(denseContentRegion) ??
-      detectGridlinePixelArt(denseContentRegion) ??
-      detectGappedGridPixelArt(denseContentRegion) ??
-      detectBlockPixelArt(denseContentRegion);
-    if (denseContentDetection && isPlausibleLegendBoardDetection(denseContentRegion, denseContentDetection)) {
-      const logical =
-        denseContentDetection.xSegments && denseContentDetection.ySegments
-          ? sampleSegments(
-              denseContentRegion,
-              denseContentDetection.xSegments,
-              denseContentDetection.ySegments,
-            )
-          : sampleRegularGrid(
-              cropRaster(denseContentRegion, denseContentDetection.cropBox),
-              denseContentDetection.gridWidth,
-              denseContentDetection.gridHeight,
-            );
+  const inferredGridWidth = inferAxisLabelBoardGridCount(croppedBoard, "x", axisLabelBoard.gridWidth);
+  const inferredGridHeight = inferAxisLabelBoardGridCount(croppedBoard, "y", axisLabelBoard.gridHeight);
+  const logical = sampleRegularGrid(
+    cropRaster(boardRegion, axisLabelBoard.cropBox),
+    inferredGridWidth,
+    inferredGridHeight,
+  );
+  const fallbackDetection: DetectionResult = {
+    gridWidth: inferredGridWidth,
+    gridHeight: inferredGridHeight,
+    cropBox: axisLabelBoard.cropBox,
+    mode: `${axisLabelBoard.mode}+legend-axis-labels`,
+  };
+  if (!isPlausibleLegendBoardDetection(boardRegion, fallbackDetection)) {
+    return null;
+  }
+  return {
+    logical,
+    gridWidth: inferredGridWidth,
+    gridHeight: inferredGridHeight,
+    mode: fallbackDetection.mode,
+    cropBox: fallbackDetection.cropBox,
+    score: scoreLegendBoardCandidate(boardRegion, fallbackDetection) + 4,
+  };
+}
 
-      return {
-        logical,
-        gridWidth: denseContentDetection.gridWidth,
-        gridHeight: denseContentDetection.gridHeight,
-        mode: `${denseContentDetection.mode}+legend-dense-band`,
-        cropBox: offsetCropBox(denseContentBandBox, denseContentDetection.cropBox),
-        score: Number.POSITIVE_INFINITY,
-      };
+function inferAxisLabelBoardGridCount(
+  image: RasterImage,
+  axis: "x" | "y",
+  fallbackCount: number,
+) {
+  const axisLength = axis === "x" ? image.width : image.height;
+  const candidates = [
+    detectLightAxisGrid(image, axis),
+    detectDarkAxisGrid(image, axis),
+  ].filter((value): value is AxisGrid => Boolean(value));
+
+  const inferredCounts: number[] = [];
+  for (const candidate of candidates) {
+    const inferred = Math.round(axisLength / Math.max(1, candidate.period));
+    if (!isReasonableGrid(axis === "x" ? inferred : fallbackCount, axis === "y" ? inferred : fallbackCount)) {
+      continue;
     }
+    if (inferred < fallbackCount || inferred > fallbackCount + 4) {
+      continue;
+    }
+    inferredCounts.push(inferred);
   }
 
-  const connectedBoardBox = detectLargestLooseContentComponentBox(boardRegion);
-  if (connectedBoardBox) {
-    const connectedRegion = cropRaster(boardRegion, connectedBoardBox);
-    const connectedDetection =
-      detectLightSeparatorPixelArt(connectedRegion) ??
-      detectGridlinePixelArt(connectedRegion) ??
-      detectGappedGridPixelArt(connectedRegion) ??
-      detectBlockPixelArt(connectedRegion);
-    if (connectedDetection && isPlausibleLegendBoardDetection(connectedRegion, connectedDetection)) {
-      const logical =
-        connectedDetection.xSegments && connectedDetection.ySegments
-          ? sampleSegments(connectedRegion, connectedDetection.xSegments, connectedDetection.ySegments)
-          : sampleRegularGrid(
-              cropRaster(connectedRegion, connectedDetection.cropBox),
-              connectedDetection.gridWidth,
-              connectedDetection.gridHeight,
-            );
-
-      return {
-        logical,
-        gridWidth: connectedDetection.gridWidth,
-        gridHeight: connectedDetection.gridHeight,
-        mode: `${connectedDetection.mode}+legend-content-box`,
-        cropBox: offsetCropBox(connectedBoardBox, connectedDetection.cropBox),
-        score: Number.POSITIVE_INFINITY,
-      };
-    }
+  if (!inferredCounts.length) {
+    return fallbackCount;
   }
 
-  const separatorBoardBox = detectLightSeparatorBoardBox(boardRegion);
-  if (separatorBoardBox) {
-    const separatorRegion = cropRaster(boardRegion, separatorBoardBox);
-    const separatorDetection =
-      detectLightSeparatorPixelArt(separatorRegion) ??
-      detectGridlinePixelArt(separatorRegion) ??
-      detectGappedGridPixelArt(separatorRegion) ??
-      detectBlockPixelArt(separatorRegion);
-    if (separatorDetection && isPlausibleLegendBoardDetection(separatorRegion, separatorDetection)) {
-      const logical =
-        separatorDetection.xSegments && separatorDetection.ySegments
-          ? sampleSegments(separatorRegion, separatorDetection.xSegments, separatorDetection.ySegments)
-          : sampleRegularGrid(
-              cropRaster(separatorRegion, separatorDetection.cropBox),
-              separatorDetection.gridWidth,
-              separatorDetection.gridHeight,
-            );
+  inferredCounts.sort((left, right) => left - right);
+  return inferredCounts[0];
+}
 
-      return {
-        logical,
-        gridWidth: separatorDetection.gridWidth,
-        gridHeight: separatorDetection.gridHeight,
-        mode: `${separatorDetection.mode}+legend-board-box`,
-        cropBox: offsetCropBox(separatorBoardBox, separatorDetection.cropBox),
-        score: Number.POSITIVE_INFINITY,
-      };
-    }
-  }
-
-  const leftInsets = [0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12];
-  const rightInsets = [0, 0.04, 0.08, 0.12, 0.16, 0.2, 0.24, 0.28, 0.32, 0.36, 0.4];
-  const topInsets = [0, 0.04, 0.08, 0.12, 0.16];
-  const bottomInsets = [0, 0.04, 0.08, 0.12];
-  let best: (ChartImportDetection & { score: number }) | null = null;
-
-  for (const leftInsetRatio of leftInsets) {
-    for (const rightInsetRatio of rightInsets) {
-      if (leftInsetRatio + rightInsetRatio >= 0.42) {
+function buildHybridLegendBoardCandidates(
+  boardRegion: RasterImage,
+  candidates: Array<ChartImportDetection & { score: number }>,
+) {
+  const hybrids: Array<ChartImportDetection & { score: number }> = [];
+  for (const xCandidate of candidates) {
+    for (const yCandidate of candidates) {
+      if (xCandidate === yCandidate) {
         continue;
       }
-    for (const topInsetRatio of topInsets) {
-      for (const bottomInsetRatio of bottomInsets) {
-        const left = Math.round(boardRegion.width * leftInsetRatio);
-        const right = boardRegion.width - Math.round(boardRegion.width * rightInsetRatio);
-        const top = Math.round(boardRegion.height * topInsetRatio);
-        const bottom = boardRegion.height - Math.round(boardRegion.height * bottomInsetRatio);
-        if (right - left < boardRegion.width * 0.55 || bottom - top < boardRegion.height * 0.5) {
-          continue;
-        }
 
-        const candidateCrop: CropBox = [left, top, right, bottom];
-        const candidateRegion = cropRaster(boardRegion, candidateCrop);
-        const boardDetection =
-          detectLightSeparatorPixelArt(candidateRegion) ??
-          detectGridlinePixelArt(candidateRegion) ??
-          detectGappedGridPixelArt(candidateRegion) ??
-          detectBlockPixelArt(candidateRegion);
-        if (!boardDetection || !isPlausibleLegendBoardDetection(candidateRegion, boardDetection)) {
-          continue;
-        }
-
-        const logical =
-          boardDetection.xSegments && boardDetection.ySegments
-            ? sampleSegments(candidateRegion, boardDetection.xSegments, boardDetection.ySegments)
-            : sampleRegularGrid(
-                cropRaster(candidateRegion, boardDetection.cropBox),
-                boardDetection.gridWidth,
-                boardDetection.gridHeight,
-              );
-
-        const cropBox = offsetCropBox(candidateCrop, boardDetection.cropBox);
-        const cropWidth = cropBox[2] - cropBox[0];
-        const cropHeight = cropBox[3] - cropBox[1];
-        const cellSize = Math.min(
-          cropWidth / Math.max(1, boardDetection.gridWidth),
-          cropHeight / Math.max(1, boardDetection.gridHeight),
-        );
-        const areaRatio = (cropWidth * cropHeight) / Math.max(1, boardRegion.width * boardRegion.height);
-        if (
-          areaRatio < 0.4 ||
-          boardDetection.gridWidth < 18 ||
-          boardDetection.gridHeight < 18
-        ) {
-          continue;
-        }
-        const gridPenalty = (boardDetection.gridWidth + boardDetection.gridHeight) * 0.025;
-        const score = cellSize * 2.4 + areaRatio * 2.4 - gridPenalty;
-
-        if (!best || score > best.score) {
-          best = {
-            logical,
-            gridWidth: boardDetection.gridWidth,
-            gridHeight: boardDetection.gridHeight,
-            mode: boardDetection.mode,
-            cropBox,
-            score,
-          };
-        }
+      const cropBox: CropBox = [
+        xCandidate.cropBox[0],
+        yCandidate.cropBox[1],
+        xCandidate.cropBox[2],
+        yCandidate.cropBox[3],
+      ];
+      const cropWidth = cropBox[2] - cropBox[0];
+      const cropHeight = cropBox[3] - cropBox[1];
+      if (cropWidth <= 0 || cropHeight <= 0) {
+        continue;
       }
-    }
+
+      const detection: DetectionResult = {
+        gridWidth: xCandidate.gridWidth,
+        gridHeight: yCandidate.gridHeight,
+        cropBox,
+        mode: `hybrid:${xCandidate.mode}|${yCandidate.mode}`,
+      };
+      if (!isPlausibleLegendBoardDetection(boardRegion, detection)) {
+        continue;
+      }
+
+      const logical = sampleRegularGrid(
+        cropRaster(boardRegion, cropBox),
+        detection.gridWidth,
+        detection.gridHeight,
+      );
+      hybrids.push({
+        logical,
+        gridWidth: detection.gridWidth,
+        gridHeight: detection.gridHeight,
+        mode: detection.mode,
+        cropBox,
+        score: scoreLegendBoardCandidate(boardRegion, detection),
+      });
     }
   }
 
-  return best;
+  return hybrids;
+}
+
+function scoreLegendBoardCandidate(
+  boardRegion: RasterImage,
+  detection: DetectionResult,
+) {
+  const cropWidth = detection.cropBox[2] - detection.cropBox[0];
+  const cropHeight = detection.cropBox[3] - detection.cropBox[1];
+  const areaRatio = (cropWidth * cropHeight) / Math.max(1, boardRegion.width * boardRegion.height);
+  const cellWidth = cropWidth / Math.max(1, detection.gridWidth);
+  const cellHeight = cropHeight / Math.max(1, detection.gridHeight);
+  const minCellSize = Math.min(cellWidth, cellHeight);
+  const cellAspect = Math.max(cellWidth, cellHeight) / Math.max(1e-6, Math.min(cellWidth, cellHeight));
+  const squarePenalty = Math.abs(Math.log(cellAspect));
+  const densityBonus = Math.min(detection.gridWidth, detection.gridHeight) * 0.11;
+  const cellSizeBonus = Math.min(minCellSize, 28) * 0.18;
+
+  return areaRatio * 4.8 + densityBonus + cellSizeBonus - squarePenalty * 14;
+}
+
+function buildScoredLegendCandidate(
+  boardRegion: RasterImage,
+  detection: DetectionResult,
+  mode: string,
+) {
+  const logical = sampleRegularGrid(
+    cropRaster(boardRegion, detection.cropBox),
+    detection.gridWidth,
+    detection.gridHeight,
+  );
+
+  return {
+    logical,
+    gridWidth: detection.gridWidth,
+    gridHeight: detection.gridHeight,
+    mode,
+    cropBox: detection.cropBox,
+    score: scoreLegendBoardCandidate(boardRegion, detection),
+  };
 }
 
 function detectOrthogonalHoughChartBoard(image: RasterImage): DetectionResult | null {
@@ -1194,6 +1552,1187 @@ function detectOrthogonalHoughChartBoard(image: RasterImage): DetectionResult | 
   };
 }
 
+function detectLegendBoardFromCandidateBox(
+  boardRegion: RasterImage,
+  candidateBox: CropBox,
+): (ChartImportDetection & { score: number }) | null {
+  const directEdges = buildFrameEdgesForBox(boardRegion, candidateBox);
+  const directFrameCrop =
+    directEdges && hasClosedRectangularFrame(boardRegion, candidateBox, directEdges)
+      ? [candidateBox[0] + 1, candidateBox[1] + 1, candidateBox[2], candidateBox[3]] satisfies CropBox
+      : null;
+
+  const candidateRegion = cropRaster(boardRegion, candidateBox);
+  const nestedFrameCrop = detectClosedRectangularBoardFrame(candidateRegion);
+
+  for (const rectangularFrameCrop of [directFrameCrop, nestedFrameCrop]) {
+    if (!rectangularFrameCrop) {
+      continue;
+    }
+
+    const frameRegion =
+      rectangularFrameCrop === directFrameCrop
+        ? cropRaster(boardRegion, rectangularFrameCrop)
+        : cropRaster(candidateRegion, rectangularFrameCrop);
+    const frameDetection =
+      detectLightSeparatorPixelArt(frameRegion) ??
+      detectGridlinePixelArt(frameRegion) ??
+      detectGappedGridPixelArt(frameRegion) ??
+      detectBlockPixelArt(frameRegion);
+    if (frameDetection && isPlausibleLegendBoardDetection(frameRegion, frameDetection)) {
+      const logical =
+        frameDetection.xSegments && frameDetection.ySegments
+          ? sampleSegments(frameRegion, frameDetection.xSegments, frameDetection.ySegments)
+          : sampleRegularGrid(
+            cropRaster(frameRegion, frameDetection.cropBox),
+            frameDetection.gridWidth,
+            frameDetection.gridHeight,
+          );
+      const cropBox =
+        rectangularFrameCrop === directFrameCrop
+          ? offsetCropBox(rectangularFrameCrop, frameDetection.cropBox)
+          : offsetCropBox(candidateBox, offsetCropBox(rectangularFrameCrop, frameDetection.cropBox));
+      const detection: DetectionResult = {
+        gridWidth: frameDetection.gridWidth,
+        gridHeight: frameDetection.gridHeight,
+        cropBox,
+        mode: `${frameDetection.mode}+legend-rect-frame`,
+      };
+
+      return {
+        logical,
+        gridWidth: detection.gridWidth,
+        gridHeight: detection.gridHeight,
+        mode: detection.mode,
+        cropBox,
+        score: scoreLegendBoardCandidate(boardRegion, detection) + 8,
+      };
+    }
+  }
+  return null;
+}
+
+function detectClosedRectangularBoardFrame(image: RasterImage): CropBox | null {
+  const perimeterFrame = buildFrameEdgesForBox(image, [0, 0, image.width, image.height]);
+  if (perimeterFrame && hasClosedRectangularFrame(image, [0, 0, image.width, image.height], perimeterFrame)) {
+    return [1, 1, image.width, image.height];
+  }
+
+  const topCandidates = findHorizontalFrameEdgeCandidates(
+    image,
+    0,
+    Math.max(0, Math.floor(image.height * 0.34)),
+    "top",
+  );
+  const bottomCandidates = findHorizontalFrameEdgeCandidates(
+    image,
+    Math.min(image.height - 1, Math.floor(image.height * 0.66)),
+    image.height - 1,
+    "bottom",
+  );
+  const leftCandidates = findVerticalFrameEdgeCandidates(
+    image,
+    0,
+    Math.max(0, Math.floor(image.width * 0.28)),
+    "left",
+  );
+  const rightCandidates = findVerticalFrameEdgeCandidates(
+    image,
+    Math.min(image.width - 1, Math.floor(image.width * 0.72)),
+    image.width - 1,
+    "right",
+  );
+  if (
+    topCandidates.length === 0 ||
+    bottomCandidates.length === 0 ||
+    leftCandidates.length === 0 ||
+    rightCandidates.length === 0
+  ) {
+    return null;
+  }
+
+  let bestFrame: { box: CropBox; score: number } | null = null;
+  for (const top of topCandidates) {
+    for (const bottom of bottomCandidates) {
+      if (bottom.position - top.position < image.height * 0.52) {
+        continue;
+      }
+      for (const left of leftCandidates) {
+        for (const right of rightCandidates) {
+          if (right.position - left.position < image.width * 0.58) {
+            continue;
+          }
+
+          const edges = [top, bottom, left, right];
+          if (!hasConsistentFrameEdgeColors(edges)) {
+            continue;
+          }
+
+          const outerBox: CropBox = [
+            left.position,
+            top.position,
+            right.position + 1,
+            bottom.position + 1,
+          ];
+          if (!hasClosedRectangularFrame(image, outerBox, edges)) {
+            continue;
+          }
+
+          const coverage =
+            (top.coverage + bottom.coverage + left.coverage + right.coverage) / 4;
+          const contrast =
+            (top.contrast + bottom.contrast + left.contrast + right.contrast) / 4;
+          const dominance =
+            (top.dominance + bottom.dominance + left.dominance + right.dominance) / 4;
+          const areaRatio =
+            ((outerBox[2] - outerBox[0]) * (outerBox[3] - outerBox[1])) /
+            Math.max(1, image.width * image.height);
+          const edgeInset =
+            (top.position +
+              left.position +
+              (image.width - 1 - right.position) +
+              (image.height - 1 - bottom.position)) /
+            Math.max(1, image.width + image.height);
+          const score =
+            areaRatio * 8 +
+            coverage * 2.4 +
+            contrast * 0.05 +
+            dominance * 1.8 -
+            edgeInset * 1.2;
+          if (!bestFrame || score > bestFrame.score) {
+            bestFrame = { box: outerBox, score };
+          }
+        }
+      }
+    }
+  }
+
+  if (!bestFrame) {
+    return null;
+  }
+
+  return [bestFrame.box[0] + 1, bestFrame.box[1] + 1, bestFrame.box[2], bestFrame.box[3]];
+}
+
+function buildFrameEdgesForBox(image: RasterImage, box: CropBox) {
+  const [left, top, rightExclusive, bottomExclusive] = box;
+  const right = rightExclusive - 1;
+  const bottom = bottomExclusive - 1;
+  if (right <= left || bottom <= top) {
+    return null;
+  }
+
+  const topColor = sampleHorizontalFrameEdgeColor(image, left, right, top);
+  const bottomColor = sampleHorizontalFrameEdgeColor(image, left, right, bottom);
+  const leftColor = sampleVerticalFrameEdgeColor(image, top, bottom, left);
+  const rightColor = sampleVerticalFrameEdgeColor(image, top, bottom, right);
+  const edges: FrameEdgeCandidate[] = [
+    {
+      position: top,
+      coverage: measureHorizontalFrameCoverage(image, left, right, top, topColor.color),
+      contrast: measureHorizontalFrameContrast(image, left, right, top, Math.min(4, bottom - top)),
+      dominantColor: topColor.color,
+      dominance: topColor.dominance,
+    },
+    {
+      position: bottom,
+      coverage: measureHorizontalFrameCoverage(image, left, right, bottom, bottomColor.color),
+      contrast: measureHorizontalFrameContrast(image, left, right, bottom, -Math.min(4, bottom - top)),
+      dominantColor: bottomColor.color,
+      dominance: bottomColor.dominance,
+    },
+    {
+      position: left,
+      coverage: measureVerticalFrameCoverage(image, top, bottom, left, leftColor.color),
+      contrast: measureVerticalFrameContrast(image, top, bottom, left, Math.min(4, right - left)),
+      dominantColor: leftColor.color,
+      dominance: leftColor.dominance,
+    },
+    {
+      position: right,
+      coverage: measureVerticalFrameCoverage(image, top, bottom, right, rightColor.color),
+      contrast: measureVerticalFrameContrast(image, top, bottom, right, -Math.min(4, right - left)),
+      dominantColor: rightColor.color,
+      dominance: rightColor.dominance,
+    },
+  ];
+  return hasConsistentFrameEdgeColors(edges) ? edges : null;
+}
+
+function hasClosedRectangularFrame(
+  image: RasterImage,
+  outerBox: CropBox,
+  edges: FrameEdgeCandidate[],
+) {
+  const [left, top, rightExclusive, bottomExclusive] = outerBox;
+  const right = rightExclusive - 1;
+  const bottom = bottomExclusive - 1;
+  const frameWidth = right - left + 1;
+  const frameHeight = bottom - top + 1;
+  if (frameWidth < 24 || frameHeight < 24) {
+    return false;
+  }
+
+  const [topEdge, bottomEdge, leftEdge, rightEdge] = edges;
+  const topCoverage = measureHorizontalFrameCoverage(
+    image,
+    left,
+    right,
+    top,
+    topEdge.dominantColor,
+  );
+  const bottomCoverage = measureHorizontalFrameCoverage(
+    image,
+    left,
+    right,
+    bottom,
+    bottomEdge.dominantColor,
+  );
+  const leftCoverage = measureVerticalFrameCoverage(
+    image,
+    top,
+    bottom,
+    left,
+    leftEdge.dominantColor,
+  );
+  const rightCoverage = measureVerticalFrameCoverage(
+    image,
+    top,
+    bottom,
+    right,
+    rightEdge.dominantColor,
+  );
+  const minCoverage = Math.min(topCoverage, bottomCoverage, leftCoverage, rightCoverage);
+  if (minCoverage < 0.38) {
+    return false;
+  }
+
+  const topContrast = measureHorizontalFrameContrast(image, left, right, top, Math.min(3, bottom - top));
+  const bottomContrast = measureHorizontalFrameContrast(image, left, right, bottom, -Math.min(3, bottom - top));
+  const leftContrast = measureVerticalFrameContrast(image, top, bottom, left, Math.min(3, right - left));
+  const rightContrast = measureVerticalFrameContrast(image, top, bottom, right, -Math.min(3, right - left));
+  const minContrast = Math.min(topContrast, bottomContrast, leftContrast, rightContrast);
+
+  return minContrast >= 16;
+}
+
+function measureHorizontalFrameCoverage(
+  image: RasterImage,
+  left: number,
+  right: number,
+  targetY: number,
+  targetColor: Rgb,
+) {
+  let bestCoverage = 0;
+  for (let delta = -1; delta <= 1; delta += 1) {
+    const y = Math.max(0, Math.min(image.height - 1, targetY + delta));
+    let matches = 0;
+    for (let x = left; x <= right; x += 1) {
+      const pixel = getPixel(image, x, y);
+      if (rgbDistance(pixel, targetColor) <= 34) {
+        matches += 1;
+      }
+    }
+    bestCoverage = Math.max(bestCoverage, matches / Math.max(1, right - left + 1));
+  }
+  return bestCoverage;
+}
+
+function measureVerticalFrameCoverage(
+  image: RasterImage,
+  top: number,
+  bottom: number,
+  targetX: number,
+  targetColor: Rgb,
+) {
+  let bestCoverage = 0;
+  for (let delta = -1; delta <= 1; delta += 1) {
+    const x = Math.max(0, Math.min(image.width - 1, targetX + delta));
+    let matches = 0;
+    for (let y = top; y <= bottom; y += 1) {
+      const pixel = getPixel(image, x, y);
+      if (rgbDistance(pixel, targetColor) <= 34) {
+        matches += 1;
+      }
+    }
+    bestCoverage = Math.max(bestCoverage, matches / Math.max(1, bottom - top + 1));
+  }
+  return bestCoverage;
+}
+
+function measureHorizontalFrameContrast(
+  image: RasterImage,
+  left: number,
+  right: number,
+  frameY: number,
+  insideOffset: number,
+) {
+  const primaryY = Math.max(0, Math.min(image.height - 1, frameY + insideOffset));
+  const reverseDelta = insideOffset >= 0 ? -1 : 1;
+  const secondaryY = Math.max(0, Math.min(image.height - 1, frameY + reverseDelta));
+  let frameRed = 0;
+  let frameGreen = 0;
+  let frameBlue = 0;
+  let primaryRed = 0;
+  let primaryGreen = 0;
+  let primaryBlue = 0;
+  let secondaryRed = 0;
+  let secondaryGreen = 0;
+  let secondaryBlue = 0;
+  let count = 0;
+  for (let x = left; x <= right; x += 1) {
+    const framePixel = getPixel(image, x, frameY);
+    const primaryPixel = getPixel(image, x, primaryY);
+    const secondaryPixel = getPixel(image, x, secondaryY);
+    frameRed += framePixel[0];
+    frameGreen += framePixel[1];
+    frameBlue += framePixel[2];
+    primaryRed += primaryPixel[0];
+    primaryGreen += primaryPixel[1];
+    primaryBlue += primaryPixel[2];
+    secondaryRed += secondaryPixel[0];
+    secondaryGreen += secondaryPixel[1];
+    secondaryBlue += secondaryPixel[2];
+    count += 1;
+  }
+  const frameColor = [
+    Math.round(frameRed / Math.max(1, count)),
+    Math.round(frameGreen / Math.max(1, count)),
+    Math.round(frameBlue / Math.max(1, count)),
+  ] as Rgb;
+  const primaryColor = [
+    Math.round(primaryRed / Math.max(1, count)),
+    Math.round(primaryGreen / Math.max(1, count)),
+    Math.round(primaryBlue / Math.max(1, count)),
+  ] as Rgb;
+  const secondaryColor = [
+    Math.round(secondaryRed / Math.max(1, count)),
+    Math.round(secondaryGreen / Math.max(1, count)),
+    Math.round(secondaryBlue / Math.max(1, count)),
+  ] as Rgb;
+  return Math.max(
+    rgbDistance(frameColor, primaryColor),
+    rgbDistance(frameColor, secondaryColor),
+  );
+}
+
+function isBoardFrameLinePixel(pixel: Rgb) {
+  return isChartFramePixel(pixel) || isLightSeparatorPixel(pixel) || isFrameAccentPixel(pixel);
+}
+
+function isFrameAccentPixel(pixel: Rgb) {
+  const [red, green, blue] = pixel;
+  const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+  return luminance >= 96 && luminance <= 238 && chroma >= 18;
+}
+
+function findHorizontalFrameEdgeCandidates(
+  image: RasterImage,
+  startY: number,
+  endY: number,
+  side: "top" | "bottom",
+) {
+  const candidates: Array<FrameEdgeCandidate & { score: number }> = [];
+  for (let y = startY; y <= endY; y += 1) {
+    const colorSample = sampleHorizontalFrameEdgeColor(image, 0, image.width - 1, y);
+    if (colorSample.dominance < 0.16) {
+      continue;
+    }
+    const coverage = measureHorizontalFrameCoverage(image, 0, image.width - 1, y, colorSample.color);
+    const insideOffset = side === "top" ? Math.min(4, image.height - 1 - y) : -Math.min(4, y);
+    const contrast = measureHorizontalFrameContrast(image, 0, image.width - 1, y, insideOffset);
+    if (coverage < 0.18 || contrast < 10) {
+      continue;
+    }
+    const edgeDistance =
+      side === "top"
+        ? y / Math.max(1, image.height)
+        : (image.height - 1 - y) / Math.max(1, image.height);
+    const score = coverage * 2.2 + contrast * 0.04 + colorSample.dominance * 1.3 - edgeDistance * 0.8;
+    candidates.push({
+      position: y,
+      coverage,
+      contrast,
+      dominantColor: colorSample.color,
+      dominance: colorSample.dominance,
+      score,
+    });
+  }
+
+  return dedupeFrameEdgeCandidates(candidates, side).slice(0, 6);
+}
+
+function findVerticalFrameEdgeCandidates(
+  image: RasterImage,
+  startX: number,
+  endX: number,
+  side: "left" | "right",
+) {
+  const candidates: Array<FrameEdgeCandidate & { score: number }> = [];
+  for (let x = startX; x <= endX; x += 1) {
+    const colorSample = sampleVerticalFrameEdgeColor(image, 0, image.height - 1, x);
+    if (colorSample.dominance < 0.16) {
+      continue;
+    }
+    const coverage = measureVerticalFrameCoverage(image, 0, image.height - 1, x, colorSample.color);
+    const insideOffset = side === "left" ? Math.min(4, image.width - 1 - x) : -Math.min(4, x);
+    const contrast = measureVerticalFrameContrast(image, 0, image.height - 1, x, insideOffset);
+    if (coverage < 0.18 || contrast < 10) {
+      continue;
+    }
+    const edgeDistance =
+      side === "left"
+        ? x / Math.max(1, image.width)
+        : (image.width - 1 - x) / Math.max(1, image.width);
+    const score = coverage * 2.2 + contrast * 0.04 + colorSample.dominance * 1.3 - edgeDistance * 0.8;
+    candidates.push({
+      position: x,
+      coverage,
+      contrast,
+      dominantColor: colorSample.color,
+      dominance: colorSample.dominance,
+      score,
+    });
+  }
+
+  return dedupeFrameEdgeCandidates(candidates, side).slice(0, 6);
+}
+
+function dedupeFrameEdgeCandidates(
+  candidates: Array<FrameEdgeCandidate & { score: number }>,
+  side: "top" | "bottom" | "left" | "right",
+) {
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  candidates.sort((left, right) =>
+    side === "top" || side === "left"
+      ? left.position - right.position
+      : right.position - left.position,
+  );
+
+  const merged: Array<FrameEdgeCandidate & { score: number }> = [];
+  for (const candidate of candidates) {
+    const last = merged.at(-1);
+    if (!last || Math.abs(candidate.position - last.position) > 3) {
+      merged.push(candidate);
+      continue;
+    }
+    if (candidate.score > last.score) {
+      merged[merged.length - 1] = candidate;
+    }
+  }
+
+  const byEdge = [...merged].sort((left, right) =>
+    side === "top" || side === "left"
+      ? left.position - right.position
+      : right.position - left.position,
+  );
+  const byScore = [...merged].sort((left, right) => right.score - left.score);
+  const selected = new Map<number, FrameEdgeCandidate & { score: number }>();
+
+  for (const candidate of byEdge.slice(0, 4)) {
+    selected.set(candidate.position, candidate);
+  }
+  for (const candidate of byScore.slice(0, 6)) {
+    selected.set(candidate.position, candidate);
+  }
+
+  const strongest = Array.from(selected.values());
+  strongest.sort((left, right) =>
+    side === "top" || side === "left"
+      ? left.position - right.position
+      : right.position - left.position,
+  );
+  return strongest;
+}
+
+type FrameEdgeCandidate = {
+  position: number;
+  coverage: number;
+  contrast: number;
+  dominantColor: Rgb;
+  dominance: number;
+};
+
+function hasConsistentFrameEdgeColors(edges: FrameEdgeCandidate[]) {
+  if (edges.some((edge) => edge.dominance < 0.24)) {
+    return false;
+  }
+
+  for (let index = 0; index < edges.length; index += 1) {
+    for (let compareIndex = index + 1; compareIndex < edges.length; compareIndex += 1) {
+      if (rgbDistance(edges[index].dominantColor, edges[compareIndex].dominantColor) > 64) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function sampleHorizontalFrameEdgeColor(
+  image: RasterImage,
+  left: number,
+  right: number,
+  y: number,
+) {
+  return sampleDominantEdgeColor((x) => getPixel(image, x, y), right - left + 1, left);
+}
+
+function sampleVerticalFrameEdgeColor(
+  image: RasterImage,
+  top: number,
+  bottom: number,
+  x: number,
+) {
+  return sampleDominantEdgeColor((y) => getPixel(image, x, y), bottom - top + 1, top);
+}
+
+function sampleDominantEdgeColor(
+  getPixelAt: (index: number) => Rgb,
+  length: number,
+  offset: number,
+) {
+  const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>();
+  let total = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    const pixel = getPixelAt(offset + index);
+    if (!isPotentialFrameSamplePixel(pixel)) {
+      continue;
+    }
+    total += 1;
+    const key = quantizeRgbKey(pixel);
+    const entry = buckets.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
+    entry.count += 1;
+    entry.red += pixel[0];
+    entry.green += pixel[1];
+    entry.blue += pixel[2];
+    buckets.set(key, entry);
+  }
+
+  if (total <= 0 || buckets.size <= 0) {
+    return {
+      color: [0, 0, 0] as Rgb,
+      dominance: 0,
+    };
+  }
+
+  let best: { count: number; red: number; green: number; blue: number } | null = null;
+  for (const entry of buckets.values()) {
+    if (!best || entry.count > best.count) {
+      best = entry;
+    }
+  }
+
+  if (!best) {
+    return {
+      color: [0, 0, 0] as Rgb,
+      dominance: 0,
+    };
+  }
+
+  return {
+    color: [
+      Math.round(best.red / Math.max(1, best.count)),
+      Math.round(best.green / Math.max(1, best.count)),
+      Math.round(best.blue / Math.max(1, best.count)),
+    ] as Rgb,
+    dominance: best.count / total,
+  };
+}
+
+function isPotentialFrameSamplePixel(pixel: Rgb) {
+  const [red, green, blue] = pixel;
+  const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+  return luminance <= 248 || chroma >= 8;
+}
+
+function quantizeRgbKey(pixel: Rgb) {
+  const step = 24;
+  return pixel
+    .map((channel) => Math.round(channel / step) * step)
+    .join(",");
+}
+
+function rgbDistance(left: Rgb, right: Rgb) {
+  const deltaRed = left[0] - right[0];
+  const deltaGreen = left[1] - right[1];
+  const deltaBlue = left[2] - right[2];
+  return Math.sqrt(deltaRed * deltaRed + deltaGreen * deltaGreen + deltaBlue * deltaBlue);
+}
+
+function measureVerticalFrameContrast(
+  image: RasterImage,
+  top: number,
+  bottom: number,
+  frameX: number,
+  insideOffset: number,
+) {
+  const primaryX = Math.max(0, Math.min(image.width - 1, frameX + insideOffset));
+  const reverseDelta = insideOffset >= 0 ? -1 : 1;
+  const secondaryX = Math.max(0, Math.min(image.width - 1, frameX + reverseDelta));
+  let frameRed = 0;
+  let frameGreen = 0;
+  let frameBlue = 0;
+  let primaryRed = 0;
+  let primaryGreen = 0;
+  let primaryBlue = 0;
+  let secondaryRed = 0;
+  let secondaryGreen = 0;
+  let secondaryBlue = 0;
+  let count = 0;
+  for (let y = top; y <= bottom; y += 1) {
+    const framePixel = getPixel(image, frameX, y);
+    const primaryPixel = getPixel(image, primaryX, y);
+    const secondaryPixel = getPixel(image, secondaryX, y);
+    frameRed += framePixel[0];
+    frameGreen += framePixel[1];
+    frameBlue += framePixel[2];
+    primaryRed += primaryPixel[0];
+    primaryGreen += primaryPixel[1];
+    primaryBlue += primaryPixel[2];
+    secondaryRed += secondaryPixel[0];
+    secondaryGreen += secondaryPixel[1];
+    secondaryBlue += secondaryPixel[2];
+    count += 1;
+  }
+  const frameColor = [
+    Math.round(frameRed / Math.max(1, count)),
+    Math.round(frameGreen / Math.max(1, count)),
+    Math.round(frameBlue / Math.max(1, count)),
+  ] as Rgb;
+  const primaryColor = [
+    Math.round(primaryRed / Math.max(1, count)),
+    Math.round(primaryGreen / Math.max(1, count)),
+    Math.round(primaryBlue / Math.max(1, count)),
+  ] as Rgb;
+  const secondaryColor = [
+    Math.round(secondaryRed / Math.max(1, count)),
+    Math.round(secondaryGreen / Math.max(1, count)),
+    Math.round(secondaryBlue / Math.max(1, count)),
+  ] as Rgb;
+  return Math.max(
+    rgbDistance(frameColor, primaryColor),
+    rgbDistance(frameColor, secondaryColor),
+  );
+}
+
+function detectLegendBoardFromAxisLabels(image: RasterImage): DetectionResult | null {
+  const xAxis = detectChartAxisLabelFamily(image, "x");
+  const yAxis = detectChartAxisLabelFamily(image, "y");
+  if (!xAxis || !yAxis) {
+    return null;
+  }
+
+  const halfX = xAxis.period / 2;
+  const halfY = yAxis.period / 2;
+  const cropBox: CropBox = [
+    Math.max(0, Math.round(xAxis.firstLine - halfX)),
+    Math.max(0, Math.round(yAxis.firstLine - halfY)),
+    Math.min(image.width, Math.round(xAxis.lastLine + halfX + 1)),
+    Math.min(image.height, Math.round(yAxis.lastLine + halfY + 1)),
+  ];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  if (cropWidth <= 0 || cropHeight <= 0) {
+    return null;
+  }
+
+  const gridWidth = xAxis.sequenceCount;
+  const gridHeight = yAxis.sequenceCount;
+  if (!isReasonableGrid(gridWidth, gridHeight)) {
+    return null;
+  }
+
+  return {
+    gridWidth,
+    gridHeight,
+    cropBox,
+    mode: "detected-axis-label-grid",
+  };
+}
+
+function detectAxisLabelBoardInnerCrop(image: RasterImage): CropBox | null {
+  const xBounds = detectStrongDarkLineBounds(
+    buildRestrictedDarkCoverageSignal(image, "x", 0.08, 0.92),
+    image.width,
+  );
+  const yBounds = detectStrongDarkLineBounds(
+    buildRestrictedDarkCoverageSignal(image, "y", 0.08, 0.92),
+    image.height,
+  );
+  if (!xBounds || !yBounds) {
+    return null;
+  }
+
+  const cropBox: CropBox = [
+    Math.max(0, xBounds[0] + 1),
+    Math.max(0, yBounds[0] + 1),
+    Math.min(image.width, xBounds[1]),
+    Math.min(image.height, yBounds[1]),
+  ];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  if (
+    cropWidth < image.width * 0.72 ||
+    cropHeight < image.height * 0.66
+  ) {
+    return null;
+  }
+
+  return cropBox;
+}
+
+function detectLegendBoardCoreCrop(image: RasterImage): CropBox | null {
+  const xRange = detectCoreCoverageRange(buildLightSeparatorCoverageSignal(image, "x"));
+  const yRange = detectCoreCoverageRange(buildLightSeparatorCoverageSignal(image, "y"));
+  if (!xRange || !yRange) {
+    return null;
+  }
+
+  const cropBox: CropBox = [xRange[0], yRange[0], xRange[1], yRange[1]];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  if (
+    cropWidth < image.width * 0.72 ||
+    cropHeight < image.height * 0.62
+  ) {
+    return null;
+  }
+
+  return cropBox;
+}
+
+function detectChartAxisLabelFamily(image: RasterImage, axis: "x" | "y"): AxisGrid | null {
+  const minPeriod = 18;
+  const signals = axis === "x"
+    ? buildHorizontalLabelBandSignals(image)
+    : buildVerticalLabelBandSignals(image);
+  const candidates = signals.flatMap((signal) => [
+    detectPeriodFromSignal(signal, minPeriod),
+    detectLooseParallelLineFamilyFromSignal(signal, minPeriod),
+    buildAxisGridFromSignalGlobalFamily(signal, minPeriod),
+  ]).filter((value): value is AxisGrid => Boolean(value));
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  candidates.sort((left, right) => {
+    if (right.sequenceCount !== left.sequenceCount) {
+      return right.sequenceCount - left.sequenceCount;
+    }
+    const leftSpan = left.lastLine - left.firstLine;
+    const rightSpan = right.lastLine - right.firstLine;
+    if (rightSpan !== leftSpan) {
+      return rightSpan - leftSpan;
+    }
+    return right.period - left.period;
+  });
+  return candidates[0];
+}
+
+function buildHorizontalLabelBandSignal(image: RasterImage) {
+  const bandHeight = Math.min(Math.max(16, Math.round(image.height * 0.075)), 72);
+  const bands: Array<[number, number]> = [
+    [Math.max(0, image.height - bandHeight), image.height],
+    [0, Math.min(image.height, bandHeight)],
+  ];
+  return buildCombinedLabelSignal(image, "x", bands);
+}
+
+function buildHorizontalLabelBandSignals(image: RasterImage) {
+  const bandHeight = Math.min(Math.max(16, Math.round(image.height * 0.075)), 72);
+  const topBand: [number, number] = [0, Math.min(image.height, bandHeight)];
+  const bottomBand: [number, number] = [Math.max(0, image.height - bandHeight), image.height];
+  return [
+    buildCombinedLabelSignal(image, "x", [topBand]),
+    buildCombinedLabelSignal(image, "x", [bottomBand]),
+    buildCombinedLabelSignal(image, "x", [bottomBand, topBand]),
+  ];
+}
+
+function buildVerticalLabelBandSignal(image: RasterImage) {
+  const bandWidth = Math.min(Math.max(16, Math.round(image.width * 0.055)), 64);
+  const bands: Array<[number, number]> = [
+    [0, Math.min(image.width, bandWidth)],
+    [Math.max(0, image.width - bandWidth), image.width],
+  ];
+  return buildCombinedLabelSignal(image, "y", bands);
+}
+
+function buildVerticalLabelBandSignals(image: RasterImage) {
+  const bandWidth = Math.min(Math.max(16, Math.round(image.width * 0.055)), 64);
+  const leftBand: [number, number] = [0, Math.min(image.width, bandWidth)];
+  const rightBand: [number, number] = [Math.max(0, image.width - bandWidth), image.width];
+  return [
+    buildCombinedLabelSignal(image, "y", [leftBand]),
+    buildCombinedLabelSignal(image, "y", [rightBand]),
+    buildCombinedLabelSignal(image, "y", [leftBand, rightBand]),
+  ];
+}
+
+function buildCombinedLabelSignal(
+  image: RasterImage,
+  axis: "x" | "y",
+  bands: Array<[number, number]>,
+) {
+  const axisLength = axis === "x" ? image.width : image.height;
+  const signal = new Float32Array(axisLength);
+
+  for (const [bandStart, bandEnd] of bands) {
+    for (let line = 0; line < axisLength; line += 1) {
+      let matches = 0;
+      for (let offset = bandStart; offset < bandEnd; offset += 1) {
+        const pixel = axis === "x" ? getPixel(image, line, offset) : getPixel(image, offset, line);
+        if (isChartFramePixel(pixel)) {
+          matches += 1;
+        }
+      }
+      signal[line] += matches / Math.max(1, bandEnd - bandStart);
+    }
+  }
+
+  return smoothSignal(signal);
+}
+
+function detectLegendBoardInnerCrop(image: RasterImage): CropBox | null {
+  const xRange = detectDenseSeparatorRange(buildLightSeparatorCoverageSignal(image, "x"));
+  const yRange = detectDenseSeparatorRange(buildLightSeparatorCoverageSignal(image, "y"));
+  if (!xRange && !yRange) {
+    return null;
+  }
+
+  const cropBox: CropBox = [
+    xRange?.[0] ?? 0,
+    yRange?.[0] ?? 0,
+    xRange?.[1] ?? image.width,
+    yRange?.[1] ?? image.height,
+  ];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  if (
+    cropWidth < image.width * 0.58 ||
+    cropHeight < image.height * 0.52
+  ) {
+    return null;
+  }
+
+  return cropBox;
+}
+
+function buildDarkCoverageSignal(image: RasterImage, axis: "x" | "y") {
+  const axisLength = axis === "x" ? image.width : image.height;
+  const otherLength = axis === "x" ? image.height : image.width;
+  const signal = new Float32Array(axisLength);
+
+  for (let line = 0; line < axisLength; line += 1) {
+    let matches = 0;
+    for (let offset = 0; offset < otherLength; offset += 1) {
+      const pixel = axis === "x" ? getPixel(image, line, offset) : getPixel(image, offset, line);
+      if (isChartFramePixel(pixel)) {
+        matches += 1;
+      }
+    }
+    signal[line] = matches / Math.max(1, otherLength);
+  }
+
+  return smoothSignal(signal);
+}
+
+function buildRestrictedDarkCoverageSignal(
+  image: RasterImage,
+  axis: "x" | "y",
+  startRatio: number,
+  endRatio: number,
+) {
+  const axisLength = axis === "x" ? image.width : image.height;
+  const otherLength = axis === "x" ? image.height : image.width;
+  const otherStart = Math.max(0, Math.floor(otherLength * startRatio));
+  const otherEnd = Math.min(otherLength, Math.ceil(otherLength * endRatio));
+  const signal = new Float32Array(axisLength);
+
+  for (let line = 0; line < axisLength; line += 1) {
+    let matches = 0;
+    for (let offset = otherStart; offset < otherEnd; offset += 1) {
+      const pixel = axis === "x" ? getPixel(image, line, offset) : getPixel(image, offset, line);
+      if (isVeryDarkNeutralPixel(pixel)) {
+        matches += 1;
+      }
+    }
+    signal[line] = matches / Math.max(1, otherEnd - otherStart);
+  }
+
+  return smoothSignal(signal);
+}
+
+function detectCoreCoverageRange(signal: Float32Array): [number, number] | null {
+  if (signal.length < 24) {
+    return null;
+  }
+
+  const mean = arrayMean(signal);
+  const stddev = arrayStandardDeviation(signal, mean);
+  const maxValue = Math.max(...signal);
+  const threshold = Math.max(maxValue * 0.52, mean + stddev * 1.15, mean + 0.01);
+  const hits: number[] = [];
+  for (let index = 0; index < signal.length; index += 1) {
+    if (signal[index] >= threshold) {
+      hits.push(index);
+    }
+  }
+
+  if (hits.length < 16) {
+    return null;
+  }
+
+  let bestStart = hits[0];
+  let bestEnd = hits[0];
+  let currentStart = hits[0];
+  let currentEnd = hits[0];
+  let bestLength = 1;
+  let currentLength = 1;
+  const maxGap = Math.max(4, Math.round(signal.length * 0.006));
+
+  for (let index = 1; index < hits.length; index += 1) {
+    const value = hits[index];
+    if (value - currentEnd <= maxGap) {
+      currentEnd = value;
+      currentLength += 1;
+      continue;
+    }
+
+    if (currentLength > bestLength || (currentLength === bestLength && currentEnd - currentStart > bestEnd - bestStart)) {
+      bestStart = currentStart;
+      bestEnd = currentEnd;
+      bestLength = currentLength;
+    }
+    currentStart = value;
+    currentEnd = value;
+    currentLength = 1;
+  }
+
+  if (currentLength > bestLength || (currentLength === bestLength && currentEnd - currentStart > bestEnd - bestStart)) {
+    bestStart = currentStart;
+    bestEnd = currentEnd;
+    bestLength = currentLength;
+  }
+
+  if (bestEnd - bestStart < signal.length * 0.48) {
+    return null;
+  }
+
+  const padding = 2;
+  return [Math.max(0, bestStart - padding), Math.min(signal.length, bestEnd + padding + 1)];
+}
+
+function detectStrongDarkLineBounds(signal: Float32Array, axisLength: number): [number, number] | null {
+  if (signal.length < 24) {
+    return null;
+  }
+
+  const mean = arrayMean(signal);
+  const stddev = arrayStandardDeviation(signal, mean);
+  const maxValue = Math.max(...signal);
+  const threshold = Math.max(mean + stddev * 1.8, maxValue * 0.42, 0.035);
+  const peaks = localMaxima(signal, threshold);
+  if (peaks.length < 2) {
+    return null;
+  }
+
+  const startCandidates = peaks.filter((peak) => peak <= axisLength * 0.38);
+  const endCandidates = peaks.filter((peak) => peak >= axisLength * 0.62);
+  if (!startCandidates.length || !endCandidates.length) {
+    return null;
+  }
+
+  let bestPair: [number, number] | null = null;
+  let bestScore = -Infinity;
+  for (const left of startCandidates) {
+    for (const right of endCandidates) {
+      if (right <= left) {
+        continue;
+      }
+      const span = right - left;
+      if (span < axisLength * 0.62) {
+        continue;
+      }
+
+      const edgeScore =
+        (1 - left / Math.max(1, axisLength)) +
+        (right / Math.max(1, axisLength));
+      const score = span / Math.max(1, axisLength) + edgeScore * 0.18 + signal[left] + signal[right];
+      if (score > bestScore) {
+        bestPair = [left, right];
+        bestScore = score;
+      }
+    }
+  }
+
+  return bestPair;
+}
+
+function detectPeriodicLegendBoard(image: RasterImage): DetectionResult | null {
+  const xAxis = detectChartAxisGridFromSignals(image, "x");
+  const yAxis = detectChartAxisGridFromSignals(image, "y");
+  if (!xAxis || !yAxis) {
+    return null;
+  }
+
+  const cropBox: CropBox = [
+    Math.max(0, xAxis.firstLine - 1),
+    Math.max(0, yAxis.firstLine - 1),
+    Math.min(image.width, xAxis.lastLine + 2),
+    Math.min(image.height, yAxis.lastLine + 2),
+  ];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  const gridWidth = Math.round(cropWidth / Math.max(1, xAxis.period));
+  const gridHeight = Math.round(cropHeight / Math.max(1, yAxis.period));
+  if (!isReasonableGrid(gridWidth, gridHeight)) {
+    return null;
+  }
+
+  const cellWidth = cropWidth / Math.max(1, gridWidth);
+  const cellHeight = cropHeight / Math.max(1, gridHeight);
+  if (cellWidth < 6 || cellHeight < 6) {
+    return null;
+  }
+
+  return {
+    gridWidth,
+    gridHeight,
+    cropBox,
+    mode: "detected-periodic-chart-grid",
+  };
+}
+
+function detectChartAxisGridFromSignals(image: RasterImage, axis: "x" | "y"): AxisGrid | null {
+  const minPeriod = 24;
+  const signals = [
+    buildLightSeparatorCoverageSignal(image, axis),
+    buildRestrictedHoughVoteSignal(image, axis, 0.04, 0.96),
+    smoothSignal(buildEdgeSignal(image, axis)),
+  ];
+  const candidates = signals.flatMap((signal) => {
+    const values = [
+      detectPeriodFromSignal(signal, minPeriod),
+      detectLooseParallelLineFamilyFromSignal(signal, minPeriod),
+      detectParallelLineFamilyFromSignal(signal, minPeriod),
+      buildAxisGridFromSignalGlobalFamily(signal, minPeriod),
+    ];
+    return values.filter((value): value is AxisGrid => Boolean(value));
+  });
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  candidates.sort((left, right) => {
+    const leftSpan = left.lastLine - left.firstLine;
+    const rightSpan = right.lastLine - right.firstLine;
+    if (rightSpan !== leftSpan) {
+      return rightSpan - leftSpan;
+    }
+    if (right.sequenceCount !== left.sequenceCount) {
+      return right.sequenceCount - left.sequenceCount;
+    }
+    return right.period - left.period;
+  });
+  return candidates[0];
+}
+
+function detectLooseParallelLineFamilyFromSignal(
+  signal: Float32Array,
+  minPeriod: number,
+): AxisGrid | null {
+  if (signal.length < minPeriod * 4) {
+    return null;
+  }
+
+  const smoothed = smoothSignal(signal);
+  const mean = arrayMean(smoothed);
+  const maxValue = Math.max(...smoothed);
+  if (!Number.isFinite(maxValue) || maxValue <= 0) {
+    return null;
+  }
+
+  const dominantPeriod = dominantAutocorrelationPeriod(smoothed, minPeriod);
+  if (!dominantPeriod) {
+    return null;
+  }
+
+  let best: AxisGrid | null = null;
+  for (const period of [dominantPeriod - 1, dominantPeriod, dominantPeriod + 1]) {
+    if (period < minPeriod) {
+      continue;
+    }
+
+    const phaseSums = new Float32Array(period);
+    const phaseCounts = new Int32Array(period);
+    for (let index = 0; index < smoothed.length; index += 1) {
+      const phase = index % period;
+      phaseSums[phase] += smoothed[index];
+      phaseCounts[phase] += 1;
+    }
+
+    let bestPhase = 0;
+    let bestPhaseAverage = -1;
+    for (let phase = 0; phase < period; phase += 1) {
+      const average = phaseSums[phase] / Math.max(1, phaseCounts[phase]);
+      if (average > bestPhaseAverage) {
+        bestPhaseAverage = average;
+        bestPhase = phase;
+      }
+    }
+
+    const tolerance = Math.max(3, Math.round(period * 0.32));
+    const minimumLineSignal = Math.max(mean * 0.92, bestPhaseAverage * 0.26);
+    const positions: number[] = [];
+    for (let expected = bestPhase; expected < smoothed.length; expected += period) {
+      const snapped = findBestSignalNear(smoothed, expected, tolerance, minimumLineSignal);
+      if (snapped !== null) {
+        positions.push(snapped);
+      }
+    }
+
+    const family = compressLinePositions(positions, tolerance);
+    if (family.length < Math.max(10, DEFAULT_MIN_GRID_CELLS * 3)) {
+      continue;
+    }
+
+    const firstLine = family[0];
+    const lastLine = family[family.length - 1];
+    const span = lastLine - firstLine;
+    if (span < smoothed.length * 0.52) {
+      continue;
+    }
+
+    const candidate: AxisGrid = {
+      period,
+      firstLine,
+      lastLine,
+      sequenceCount: family.length,
+    };
+
+    if (
+      !best ||
+      candidate.sequenceCount > best.sequenceCount ||
+      (candidate.sequenceCount === best.sequenceCount &&
+        candidate.lastLine - candidate.firstLine > best.lastLine - best.firstLine)
+    ) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
 function isPlausibleLegendBoardDetection(image: RasterImage, detection: DetectionResult) {
   const cropWidth = detection.cropBox[2] - detection.cropBox[0];
   const cropHeight = detection.cropBox[3] - detection.cropBox[1];
@@ -1214,6 +2753,160 @@ function isPlausibleLegendBoardDetection(image: RasterImage, detection: Detectio
     cellHeight >= 6 &&
     cellAspect <= 1.45
   );
+}
+
+function buildAxisGridFromSignalGlobalFamily(signal: Float32Array, minPeriod: number): AxisGrid | null {
+  if (signal.length < minPeriod * 4) {
+    return null;
+  }
+
+  const smoothed = smoothSignal(signal);
+  const mean = arrayMean(smoothed);
+  const stddev = arrayStandardDeviation(smoothed, mean);
+  let maxValue = 0;
+  for (const value of smoothed) {
+    if (value > maxValue) {
+      maxValue = value;
+    }
+  }
+
+  const threshold = Math.max(mean + stddev * 0.45, maxValue * 0.24, mean + 1);
+  const peaks = localMaxima(smoothed, threshold);
+  if (peaks.length < 8) {
+    return null;
+  }
+
+  const diffs: number[] = [];
+  for (let index = 0; index < peaks.length - 1; index += 1) {
+    const diff = peaks[index + 1] - peaks[index];
+    if (diff >= minPeriod && diff <= Math.min(128, Math.floor(signal.length / 2))) {
+      diffs.push(diff);
+    }
+  }
+
+  const candidatePeriods = new Set<number>();
+  const periodByDiffs = dominantPeriod(diffs, minPeriod);
+  const periodByAutocorrelation = dominantAutocorrelationPeriod(smoothed, minPeriod);
+  for (const period of [periodByDiffs, periodByAutocorrelation]) {
+    if (!period) {
+      continue;
+    }
+    candidatePeriods.add(period);
+    if (period > minPeriod * 2) {
+      candidatePeriods.add(Math.max(minPeriod, Math.round(period / 2)));
+    }
+    candidatePeriods.add(period + 1);
+    candidatePeriods.add(Math.max(minPeriod, period - 1));
+  }
+
+  let best: (AxisGrid & { span: number; error: number }) | null = null;
+  for (const period of candidatePeriods) {
+    if (!Number.isFinite(period) || period < minPeriod) {
+      continue;
+    }
+    const tolerance = Math.max(2, Math.round(period * 0.18));
+    for (const anchor of peaks) {
+      const family = collectPeakFamily(peaks, anchor, period, tolerance);
+      if (family.length < 8) {
+        continue;
+      }
+
+      const firstLine = family[0];
+      const lastLine = family[family.length - 1];
+      const span = lastLine - firstLine;
+      if (span < signal.length * 0.45) {
+        continue;
+      }
+
+      let error = 0;
+      for (let index = 0; index < family.length - 1; index += 1) {
+        error += Math.abs((family[index + 1] - family[index]) - period);
+      }
+      error /= Math.max(1, family.length - 1);
+
+      if (error > tolerance * 0.8) {
+        continue;
+      }
+
+      const candidate = {
+        period,
+        firstLine,
+        lastLine,
+        sequenceCount: family.length,
+        span,
+        error,
+      };
+
+      if (
+        !best ||
+        candidate.span > best.span ||
+        (candidate.span === best.span && candidate.sequenceCount > best.sequenceCount) ||
+        (candidate.span === best.span &&
+          candidate.sequenceCount === best.sequenceCount &&
+          candidate.error < best.error)
+      ) {
+        best = candidate;
+      }
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return {
+    period: best.period,
+    firstLine: best.firstLine,
+    lastLine: best.lastLine,
+    sequenceCount: best.sequenceCount,
+  };
+}
+
+function collectPeakFamily(
+  peaks: number[],
+  anchor: number,
+  period: number,
+  tolerance: number,
+) {
+  const values = new Set<number>([anchor]);
+  let expected = anchor - period;
+  while (expected >= 0) {
+    const nearest = findNearestPeak(peaks, expected, tolerance);
+    if (nearest === null) {
+      expected -= period;
+      continue;
+    }
+    values.add(nearest);
+    expected = nearest - period;
+  }
+
+  expected = anchor + period;
+  const maxPeak = peaks[peaks.length - 1] ?? anchor;
+  while (expected <= maxPeak + tolerance) {
+    const nearest = findNearestPeak(peaks, expected, tolerance);
+    if (nearest === null) {
+      expected += period;
+      continue;
+    }
+    values.add(nearest);
+    expected = nearest + period;
+  }
+
+  return Array.from(values).sort((left, right) => left - right);
+}
+
+function findNearestPeak(peaks: number[], target: number, tolerance: number) {
+  let best: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const peak of peaks) {
+    const distance = Math.abs(peak - target);
+    if (distance > tolerance || distance >= bestDistance) {
+      continue;
+    }
+    best = peak;
+    bestDistance = distance;
+  }
+  return best;
 }
 
 function detectDenseLooseContentBandBox(image: RasterImage): CropBox | null {
@@ -1303,8 +2996,8 @@ function detectLargestLooseContentComponentBox(image: RasterImage): CropBox | nu
 function detectLightSeparatorBoardBox(image: RasterImage): CropBox | null {
   const xSignal = buildLightSeparatorCoverageSignal(image, "x");
   const ySignal = buildLightSeparatorCoverageSignal(image, "y");
-  const xRange = detectDenseSeparatorRange(xSignal);
-  const yRange = detectDenseSeparatorRange(ySignal);
+  const xRange = detectSeparatorFamilyExtent(xSignal);
+  const yRange = detectSeparatorFamilyExtent(ySignal);
 
   if (!xRange || !yRange) {
     return null;
@@ -1323,26 +3016,114 @@ function detectLightSeparatorBoardBox(image: RasterImage): CropBox | null {
   return cropBox;
 }
 
-function detectLegendTop(image: RasterImage) {
-  const minLegendHeight = Math.max(56, Math.floor(image.height * 0.06));
-  const maxLegendHeight = Math.max(minLegendHeight + 8, Math.floor(image.height * 0.24));
-  let bestTop: number | null = null;
-  let bestScore = 0;
+function detectSeparatorFamilyExtent(signal: Float32Array): [number, number] | null {
+  if (signal.length < 12) {
+    return null;
+  }
 
-  for (let legendHeight = minLegendHeight; legendHeight <= maxLegendHeight; legendHeight += 12) {
-    const top = image.height - legendHeight;
-    const region = cropRaster(image, [0, top, image.width, image.height]);
-    if (countLegendSwatches(region) < 3) {
-      continue;
-    }
-    const score = scoreChartLegend(region);
-    if (score > bestScore) {
-      bestScore = score;
-      bestTop = top;
+  const mean = arrayMean(signal);
+  const stddev = arrayStandardDeviation(signal, mean);
+  let maxValue = 0;
+  for (const value of signal) {
+    if (value > maxValue) {
+      maxValue = value;
     }
   }
 
-  return bestScore >= 0.28 ? bestTop : null;
+  const threshold = Math.max(0.008, maxValue * 0.12, mean + stddev * 0.45);
+  const hits: number[] = [];
+  for (let index = 0; index < signal.length; index += 1) {
+    if (signal[index] >= threshold) {
+      hits.push(index);
+    }
+  }
+
+  if (hits.length < 18) {
+    return null;
+  }
+
+  const start = hits[Math.max(0, Math.floor(hits.length * 0.03))] ?? hits[0];
+  const end = hits[Math.min(hits.length - 1, Math.ceil(hits.length * 0.97))] ?? hits[hits.length - 1];
+  if (end - start < signal.length * 0.35) {
+    return null;
+  }
+
+  const padding = 2;
+  return [Math.max(0, start - padding), Math.min(signal.length, end + padding + 1)];
+}
+
+function detectLegendTop(image: RasterImage) {
+  const trailingContentLegendTop = detectTrailingLegendBandTop(image);
+  if (trailingContentLegendTop !== null) {
+    return trailingContentLegendTop;
+  }
+
+  const minLegendHeight = Math.max(40, Math.floor(image.height * 0.04));
+  const maxLegendHeight = Math.max(minLegendHeight + 8, Math.floor(image.height * 0.34));
+  const searchTop = Math.max(0, Math.floor(image.height * 0.5));
+  let bestTop: number | null = null;
+  let bestScore = 0;
+
+  for (let legendHeight = minLegendHeight; legendHeight <= maxLegendHeight; legendHeight += 10) {
+    for (let top = searchTop; top <= image.height - minLegendHeight; top += 8) {
+      const bottom = Math.min(image.height, top + legendHeight);
+      const region = cropRaster(image, [0, top, image.width, bottom]);
+      if (countLegendSwatches(region) < 2) {
+        continue;
+      }
+      const score = scoreChartLegend(region);
+      if (score > bestScore) {
+        bestScore = score;
+        bestTop = top;
+      }
+    }
+  }
+
+  return bestScore >= 0.18 ? bestTop : null;
+}
+
+function detectTrailingLegendBandTop(image: RasterImage) {
+  const rowCounts = new Int32Array(image.height);
+  const rowThreshold = Math.max(8, Math.round(image.width * 0.03));
+  for (let y = 0; y < image.height; y += 1) {
+    let count = 0;
+    for (let x = 0; x < image.width; x += 1) {
+      if (isLooseContentPixel(getPixel(image, x, y))) {
+        count += 1;
+      }
+    }
+    rowCounts[y] = count;
+  }
+
+  let bottom = lastIndexAtOrAbove(rowCounts, rowThreshold);
+  if (bottom === null || bottom < image.height * 0.55) {
+    return null;
+  }
+
+  let top = bottom;
+  let gap = 0;
+  const maxGap = Math.max(6, Math.round(image.height * 0.01));
+  const minTop = Math.max(0, Math.floor(image.height * 0.45));
+  while (top > minTop) {
+    const previous = top - 1;
+    if (rowCounts[previous] >= rowThreshold) {
+      top = previous;
+      gap = 0;
+      continue;
+    }
+    gap += 1;
+    top = previous;
+    if (gap > maxGap) {
+      top += gap;
+      break;
+    }
+  }
+
+  const region = cropRaster(image, [0, top, image.width, bottom + 1]);
+  if (countLegendSwatches(region) < 2) {
+    return null;
+  }
+  return scoreChartLegend(region) >= 0.14 ? top : null;
 }
 
 function detectRawPixelArt(image: RasterImage): DetectionResult | null {
@@ -1563,38 +3344,266 @@ function detectOrthogonalHoughAxisGrid(image: RasterImage, axis: "x" | "y"): Axi
     return null;
   }
 
-  const sampleStart = Math.max(1, Math.floor(otherLength * 0.08));
-  const sampleEnd = Math.min(otherLength - 1, Math.ceil(otherLength * 0.88));
-  if (sampleEnd - sampleStart < 16) {
+  const candidates = [
+    detectParallelLineFamilyFromSignal(buildLightSeparatorCoverageSignal(image, axis), 10),
+    detectParallelLineFamilyFromSignal(buildRestrictedHoughVoteSignal(image, axis, 0.12, 0.88), 10),
+    buildAxisGridFromSignalGlobalFamily(buildRestrictedHoughVoteSignal(image, axis, 0.12, 0.88), 10),
+    buildAxisGridFromSignalGlobalFamily(buildLightSeparatorCoverageSignal(image, axis), 10),
+  ].filter((value): value is AxisGrid => Boolean(value));
+
+  if (!candidates.length) {
     return null;
   }
 
-  const signal = new Float32Array(axisLength);
-  for (let line = 1; line < axisLength - 1; line += 1) {
-    let vote = 0;
-    for (let offset = sampleStart; offset < sampleEnd; offset += 1) {
-      const center = axis === "x" ? getPixel(image, line, offset) : getPixel(image, offset, line);
-      const previous = axis === "x" ? getPixel(image, line - 1, offset) : getPixel(image, offset, line - 1);
-      const next = axis === "x" ? getPixel(image, line + 1, offset) : getPixel(image, offset, line + 1);
-      if (isOrthogonalHoughLinePixel(center)) {
-        vote += 1.2;
-      }
-      const gradient = Math.abs(rgbToGray(previous) - rgbToGray(next));
-      if (gradient >= 22) {
-        vote += gradient / 255;
-      }
+  candidates.sort((left, right) => {
+    const leftSpan = left.lastLine - left.firstLine;
+    const rightSpan = right.lastLine - right.firstLine;
+    if (rightSpan !== leftSpan) {
+      return rightSpan - leftSpan;
     }
-    signal[line] = vote / Math.max(1, sampleEnd - sampleStart);
-  }
-
-  return buildAxisGridFromSignal(signal, 6);
+    if (right.sequenceCount !== left.sequenceCount) {
+      return right.sequenceCount - left.sequenceCount;
+    }
+    return right.period - left.period;
+  });
+  return candidates[0];
 }
 
-function isOrthogonalHoughLinePixel(pixel: Rgb) {
+function detectParallelLineFamilyFromSignal(signal: Float32Array, minPeriod: number): AxisGrid | null {
+  if (signal.length < minPeriod * 4) {
+    return null;
+  }
+
+  const smoothed = smoothSignal(signal);
+  let maxValue = 0;
+  let mean = 0;
+  for (const value of smoothed) {
+    maxValue = Math.max(maxValue, value);
+    mean += value;
+  }
+  mean /= Math.max(1, smoothed.length);
+  if (maxValue <= 0) {
+    return null;
+  }
+
+  const maxPeriod = Math.min(64, Math.floor(signal.length / 2));
+  let best: (AxisGrid & { score: number; averageSignal: number }) | null = null;
+
+  for (let period = minPeriod; period <= maxPeriod; period += 1) {
+    const phaseSums = new Float32Array(period);
+    const phaseCounts = new Int32Array(period);
+    for (let index = 0; index < smoothed.length; index += 1) {
+      const phase = index % period;
+      phaseSums[phase] += smoothed[index];
+      phaseCounts[phase] += 1;
+    }
+
+    let bestPhase = 0;
+    let bestPhaseAverage = -1;
+    for (let phase = 0; phase < period; phase += 1) {
+      const average = phaseSums[phase] / Math.max(1, phaseCounts[phase]);
+      if (average > bestPhaseAverage) {
+        bestPhaseAverage = average;
+        bestPhase = phase;
+      }
+    }
+
+    if (bestPhaseAverage < Math.max(mean * 1.4, maxValue * 0.18)) {
+      continue;
+    }
+
+    const tolerance = Math.max(2, Math.round(period * 0.24));
+    const minimumLineSignal = Math.max(mean * 1.08, bestPhaseAverage * 0.42);
+    const positions: number[] = [];
+    const start = bestPhase % period;
+
+    for (let expected = start; expected < smoothed.length; expected += period) {
+      const snapped = findBestSignalNear(smoothed, expected, tolerance, minimumLineSignal);
+      if (snapped !== null) {
+        positions.push(snapped);
+      }
+    }
+
+    const family = compressLinePositions(positions, tolerance);
+    if (family.length < 8) {
+      continue;
+    }
+
+    const firstLine = family[0];
+    const lastLine = family[family.length - 1];
+    const span = lastLine - firstLine;
+    if (span < smoothed.length * 0.48) {
+      continue;
+    }
+
+    let gapError = 0;
+    for (let index = 0; index < family.length - 1; index += 1) {
+      gapError += Math.abs((family[index + 1] - family[index]) - period);
+    }
+    gapError /= Math.max(1, family.length - 1);
+    if (gapError > Math.max(2.8, period * 0.22)) {
+      continue;
+    }
+
+    const score =
+      (span / smoothed.length) * 4.2 +
+      family.length * 0.18 +
+      (bestPhaseAverage / Math.max(1e-6, maxValue)) * 1.6 -
+      gapError * 0.08;
+
+    const candidate = {
+      period,
+      firstLine,
+      lastLine,
+      sequenceCount: family.length,
+      score,
+      averageSignal: bestPhaseAverage,
+    };
+
+    if (
+      !best ||
+      candidate.score > best.score ||
+      (candidate.score === best.score && candidate.sequenceCount > best.sequenceCount) ||
+      (candidate.score === best.score &&
+        candidate.sequenceCount === best.sequenceCount &&
+        candidate.averageSignal > best.averageSignal)
+    ) {
+      best = candidate;
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return {
+    period: best.period,
+    firstLine: best.firstLine,
+    lastLine: best.lastLine,
+    sequenceCount: best.sequenceCount,
+  };
+}
+
+function findBestSignalNear(
+  signal: Float32Array,
+  expected: number,
+  tolerance: number,
+  minimumSignal: number,
+) {
+  const start = Math.max(0, expected - tolerance);
+  const end = Math.min(signal.length - 1, expected + tolerance);
+  let bestIndex: number | null = null;
+  let bestValue = minimumSignal;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (let index = start; index <= end; index += 1) {
+    const value = signal[index];
+    if (value < minimumSignal) {
+      continue;
+    }
+    const distance = Math.abs(index - expected);
+    if (
+      value > bestValue ||
+      (value === bestValue && distance < bestDistance)
+    ) {
+      bestIndex = index;
+      bestValue = value;
+      bestDistance = distance;
+    }
+  }
+
+  return bestIndex;
+}
+
+function compressLinePositions(positions: number[], tolerance: number) {
+  if (!positions.length) {
+    return [];
+  }
+
+  const sorted = [...positions].sort((left, right) => left - right);
+  const compressed: number[] = [];
+  let clusterStart = sorted[0];
+  let clusterSum = sorted[0];
+  let clusterCount = 1;
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const value = sorted[index];
+    if (value - clusterStart <= tolerance) {
+      clusterSum += value;
+      clusterCount += 1;
+      continue;
+    }
+
+    compressed.push(Math.round(clusterSum / clusterCount));
+    clusterStart = value;
+    clusterSum = value;
+    clusterCount = 1;
+  }
+
+  compressed.push(Math.round(clusterSum / clusterCount));
+  return compressed;
+}
+
+function buildRestrictedHoughVoteSignal(
+  image: RasterImage,
+  axis: "x" | "y",
+  startRatio: number,
+  endRatio: number,
+) {
+  if (axis === "x") {
+    const signal = new Float32Array(Math.max(0, image.width - 1));
+    const startY = Math.max(0, Math.floor(image.height * startRatio));
+    const endY = Math.min(image.height, Math.ceil(image.height * endRatio));
+    for (let x = 0; x < image.width - 1; x += 1) {
+      let sum = 0;
+      for (let y = startY; y < endY; y += 1) {
+        const left = getPixel(image, x, y);
+        const center = getPixel(image, x + 1, y);
+        const right = getPixel(image, Math.min(image.width - 1, x + 2), y);
+        if (isOrthogonalHoughGridPixel(center)) {
+          sum += 2.4;
+        }
+        sum +=
+          ((Math.abs(left[0] - right[0]) +
+            Math.abs(left[1] - right[1]) +
+            Math.abs(left[2] - right[2])) /
+            3) *
+          0.02;
+      }
+      signal[x] = sum / Math.max(1, endY - startY);
+    }
+    return signal;
+  }
+
+  const signal = new Float32Array(Math.max(0, image.height - 1));
+  const startX = Math.max(0, Math.floor(image.width * startRatio));
+  const endX = Math.min(image.width, Math.ceil(image.width * endRatio));
+  for (let y = 0; y < image.height - 1; y += 1) {
+    let sum = 0;
+    for (let x = startX; x < endX; x += 1) {
+      const top = getPixel(image, x, y);
+      const center = getPixel(image, x, y + 1);
+      const bottom = getPixel(image, x, Math.min(image.height - 1, y + 2));
+      if (isOrthogonalHoughGridPixel(center)) {
+        sum += 2.4;
+      }
+      sum +=
+        ((Math.abs(top[0] - bottom[0]) +
+          Math.abs(top[1] - bottom[1]) +
+          Math.abs(top[2] - bottom[2])) /
+          3) *
+        0.02;
+    }
+    signal[y] = sum / Math.max(1, endX - startX);
+  }
+  return signal;
+}
+
+function isOrthogonalHoughGridPixel(pixel: Rgb) {
   const [red, green, blue] = pixel;
   const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
   const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
-  return luminance >= 120 && luminance <= 246 && chroma <= 32;
+  return luminance >= 150 && luminance <= 244 && chroma <= 22;
 }
 
 function buildLightSeparatorCoverageSignal(image: RasterImage, axis: "x" | "y") {
@@ -3270,8 +5279,8 @@ function renderChart(
   const metaFontSize = Math.max(15, Math.floor(cellSize * 0.4));
   const legendLabelFontSize = Math.max(14, Math.floor(cellSize * 0.4));
   const legendCountFontSize = Math.max(14, Math.floor(cellSize * 0.35));
-  const logoSize = Math.max(30, Math.floor(cellSize * 0.96));
-  const brandRowHeight = Math.max(logoSize, brandFontSize) + 14;
+  const logoSize = Math.max(42, Math.floor(cellSize * 1.34));
+  const brandRowHeight = Math.max(logoSize, brandFontSize) + 16;
   const metaRowHeight = metaLine ? metaFontSize + Math.max(12, Math.floor(cellSize * 0.24)) : 0;
 
   const legendTileWidth = Math.max(88, Math.floor(cellSize * 2.08));
@@ -3318,12 +5327,12 @@ function renderChart(
   context.textAlign = "left";
   context.textBaseline = "middle";
   const brandRowY = canvasPadding + brandRowHeight / 2;
-  const brandBlockWidth = estimateTextWidth(brandFontSize, true, true, BRAND_NAME) + logoSize + 14;
+  const brandBlockWidth = estimateTextWidth(brandFontSize, true, true, BRAND_NAME) + logoSize + 18;
   const brandStartX = Math.round((canvasWidth - brandBlockWidth) / 2);
   drawBrandLogo(context, brandStartX, brandRowY - logoSize / 2, logoSize);
   context.font = buildFont(brandFontSize, true, true);
   context.fillStyle = "#1C1C1C";
-  context.fillText(BRAND_NAME, brandStartX + logoSize + 14, brandRowY);
+  context.fillText(BRAND_NAME, brandStartX + logoSize + 18, brandRowY);
 
   context.textAlign = "center";
   context.font = buildFont(titleFontSize, true, true);

@@ -1,6 +1,7 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import * as Slider from "@radix-ui/react-slider";
 import clsx from "clsx";
+import { createPortal } from "react-dom";
 import {
   Eraser,
   Hand,
@@ -20,7 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import type { Messages } from "../lib/i18n";
-import type { EditableCell, NormalizedCropRect } from "../lib/mard";
+import { measureHexDistance255, type EditableCell, type NormalizedCropRect } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
 
 type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
@@ -71,6 +72,7 @@ export function PixelEditorPanel({
   matchedCoveragePercent,
   onMatchedCoveragePercentChange,
   onToggleMatchedColor,
+  onReplaceMatchedColor,
   pindouFlipHorizontal,
   onPindouFlipHorizontalChange,
   pindouZoom,
@@ -120,6 +122,7 @@ export function PixelEditorPanel({
   matchedCoveragePercent: number;
   onMatchedCoveragePercentChange: (value: number) => void;
   onToggleMatchedColor: (label: string) => void;
+  onReplaceMatchedColor: (sourceLabel: string, targetLabel: string) => void;
   pindouFlipHorizontal: boolean;
   onPindouFlipHorizontalChange: (value: boolean) => void;
   pindouZoom: number;
@@ -186,8 +189,11 @@ export function PixelEditorPanel({
         return;
       }
 
-      const top = panelBodyRef.current.getBoundingClientRect().top;
-      const nextHeight = Math.max(420, Math.round(window.innerHeight - top - 24));
+      const viewportWidth = window.innerWidth;
+      const nextHeight =
+        viewportWidth < 1280
+          ? Math.max(540, Math.round(window.innerHeight * 0.72))
+          : Math.max(420, Math.round(window.innerHeight - panelBodyRef.current.getBoundingClientRect().top - 24));
       setPanelViewportHeight((previous) => (previous === nextHeight ? previous : nextHeight));
     }
 
@@ -269,7 +275,7 @@ export function PixelEditorPanel({
       <section
         ref={panelBodyRef}
         className={clsx("flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] rounded-tl-none rounded-tr-none border p-3 backdrop-blur transition-colors sm:rounded-[16px] sm:rounded-tl-none sm:rounded-tr-none sm:p-4 xl:rounded-[18px] xl:rounded-tl-none xl:rounded-tr-none", theme.panel)}
-        style={panelViewportHeight > 0 ? { height: `${panelViewportHeight}px` } : undefined}
+        style={panelViewportHeight > 0 ? { height: `${panelViewportHeight}px`, minHeight: `${panelViewportHeight}px` } : undefined}
       >
         <Tabs.Content value="edit" className="mt-4 flex min-h-0 flex-1">
           <div className="grid h-full min-w-0 flex-1 items-stretch gap-3 xl:grid-cols-[56px_minmax(0,1fr)] xl:gap-4">
@@ -364,6 +370,8 @@ export function PixelEditorPanel({
                 activeMatchedColorCount={activeMatchedColorCount}
                 onMatchedCoveragePercentChange={onMatchedCoveragePercentChange}
                 onToggleMatchedColor={onToggleMatchedColor}
+                onReplaceMatchedColor={onReplaceMatchedColor}
+                paletteOptions={paletteOptions}
               />
             </section>
           </div>
@@ -601,6 +609,8 @@ function EditResultSummary({
   activeMatchedColorCount,
   onMatchedCoveragePercentChange,
   onToggleMatchedColor,
+  onReplaceMatchedColor,
+  paletteOptions,
 }: {
   t: Messages;
   isDark: boolean;
@@ -612,8 +622,136 @@ function EditResultSummary({
   activeMatchedColorCount: number;
   onMatchedCoveragePercentChange: (value: number) => void;
   onToggleMatchedColor: (label: string) => void;
+  onReplaceMatchedColor: (sourceLabel: string, targetLabel: string) => void;
+  paletteOptions: Array<{ label: string; hex: string }>;
 }) {
   const theme = getThemeClasses(isDark);
+  const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
+  const [hoveredPointer, setHoveredPointer] = useState<{ x: number; y: number } | null>(null);
+  const popupHoldRef = useRef(false);
+  const leaveTimeoutRef = useRef<number | null>(null);
+  const nearestReplacementMap = useMemo(
+    () =>
+      new Map(
+        matchedColors.map((color) => [
+          color.label,
+          getNearestPaletteOptions(color, paletteOptions, 5),
+        ]),
+      ),
+    [matchedColors, paletteOptions],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (leaveTimeoutRef.current !== null) {
+        window.clearTimeout(leaveTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  function openReplacementPopup(label: string, event: Pick<MouseEvent, "clientX" | "clientY">) {
+    if (leaveTimeoutRef.current !== null) {
+      window.clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
+    setHoveredLabel(label);
+    setHoveredPointer({ x: event.clientX, y: event.clientY });
+  }
+
+  function closeReplacementPopupSoon() {
+    if (leaveTimeoutRef.current !== null) {
+      window.clearTimeout(leaveTimeoutRef.current);
+    }
+    leaveTimeoutRef.current = window.setTimeout(() => {
+      if (popupHoldRef.current) {
+        return;
+      }
+      setHoveredLabel(null);
+      setHoveredPointer(null);
+    }, 80);
+  }
+
+  const hoveredOptions = hoveredLabel
+    ? nearestReplacementMap.get(hoveredLabel) ?? []
+    : [];
+  const popupWidth = 196;
+  const popupHeight = 52 + hoveredOptions.length * 42;
+  const popupLeft =
+    hoveredPointer === null
+      ? 12
+      : Math.min(window.innerWidth - popupWidth - 12, Math.max(12, hoveredPointer.x + 14));
+  const popupTop =
+    hoveredPointer === null
+      ? 12
+      : hoveredPointer.y - popupHeight - 12 >= 12
+        ? hoveredPointer.y - popupHeight - 12
+        : Math.min(window.innerHeight - popupHeight - 12, Math.max(12, hoveredPointer.y + 12));
+
+  const popup =
+    hoveredLabel && hoveredPointer && hoveredOptions.length && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className={clsx(
+              "fixed z-[200] rounded-[10px] border p-3 shadow-xl backdrop-blur",
+              theme.controlShell,
+            )}
+            onMouseEnter={() => {
+              popupHoldRef.current = true;
+              if (leaveTimeoutRef.current !== null) {
+                window.clearTimeout(leaveTimeoutRef.current);
+                leaveTimeoutRef.current = null;
+              }
+            }}
+            onMouseLeave={() => {
+              popupHoldRef.current = false;
+              closeReplacementPopupSoon();
+            }}
+            style={{
+              left: `${popupLeft}px`,
+              top: `${popupTop}px`,
+              width: `${popupWidth}px`,
+            }}
+          >
+            <div className={clsx("mb-2 text-xs font-semibold", theme.cardMuted)}>
+              {hoveredLabel} {"->"}
+            </div>
+            <div className="space-y-1.5">
+              {hoveredOptions.map((option) => (
+                <button
+                  key={`${hoveredLabel}-${option.label}`}
+                  className={clsx(
+                    "flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left text-sm transition",
+                    theme.card,
+                  )}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    onReplaceMatchedColor(hoveredLabel, option.label);
+                    setHoveredLabel(null);
+                    setHoveredPointer(null);
+                    popupHoldRef.current = false;
+                  }}
+                  onClick={() => {
+                    onReplaceMatchedColor(hoveredLabel, option.label);
+                    setHoveredLabel(null);
+                    setHoveredPointer(null);
+                    popupHoldRef.current = false;
+                  }}
+                  type="button"
+                >
+                  <span
+                    className="h-4 w-4 shrink-0 rounded-[4px] border border-black/10"
+                    style={{ backgroundColor: option.hex }}
+                  />
+                  <span className={clsx("truncate font-semibold", theme.cardTitle)}>
+                    {option.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <section
@@ -647,6 +785,8 @@ function EditResultSummary({
               key={color.label}
               className={clsx("flex items-center gap-3 rounded-md border px-3 py-2 transition-colors", theme.card)}
               onClick={() => onToggleMatchedColor(color.label)}
+              onMouseEnter={(event) => openReplacementPopup(color.label, event)}
+              onMouseLeave={closeReplacementPopupSoon}
               type="button"
               title={color.label}
               style={{
@@ -665,6 +805,7 @@ function EditResultSummary({
         </div>
         <p className={clsx("mt-3 text-xs", theme.cardMuted)}>{t.matchedColorsHint}</p>
       </div>
+      {popup}
     </section>
   );
 }
@@ -1300,17 +1441,30 @@ function EditorStage({
   }, [stageMode, canPanStage, panToolActive, pindouZoom, onPindouZoomChange, editZoom, onEditZoomChange, cells, focusedLabel, onFocusLabelChange]);
 
   useEffect(() => {
-    if (stageMode !== "pindou" || !stageViewportRef.current) {
+    if (
+      (stageMode !== "pindou" && stageMode !== "edit") ||
+      !stageViewportRef.current
+    ) {
       return;
     }
 
     const element = stageViewportRef.current;
 
     function handleWheel(event: WheelEvent) {
-      if (!onPindouZoomChange) {
+      if (stageMode === "edit") {
+        if (!onEditZoomChange || !(event.ctrlKey || event.metaKey)) {
+          return;
+        }
+
+        event.preventDefault();
+        const delta = event.deltaY < 0 ? 0.12 : -0.12;
+        onEditZoomChange(clampEditorZoom(editZoom + delta));
         return;
       }
 
+      if (!onPindouZoomChange) {
+        return;
+      }
       event.preventDefault();
       const delta = event.deltaY < 0 ? 0.12 : -0.12;
       onPindouZoomChange(clampPindouZoom(pindouZoom + delta));
@@ -1320,7 +1474,7 @@ function EditorStage({
     return () => {
       element.removeEventListener("wheel", handleWheel);
     };
-  }, [stageMode, pindouZoom, onPindouZoomChange]);
+  }, [stageMode, pindouZoom, onPindouZoomChange, editZoom, onEditZoomChange]);
 
   useEffect(() => {
     if (!canPanStage || !stageViewportRef.current) {
@@ -1528,32 +1682,59 @@ function EditorStage({
         <div
           className="pointer-events-none absolute z-40"
           style={{
-            left: `${cursorPreview.x + 14}px`,
-            top: `${cursorPreview.y + 14}px`,
-            transform: "translate(0, 0)",
+            left: `${cursorPreview.x}px`,
+            top: `${cursorPreview.y}px`,
+            transform: "translate(-50%, -50%)",
           }}
         >
-          <div
-            className={clsx(
-              "flex items-center gap-2 rounded-md border px-2 py-1.5 shadow-sm backdrop-blur-sm",
-              isDark ? "border-white/10 bg-stone-950/88" : "border-stone-300 bg-white/92",
-            )}
-          >
+          <div className="relative h-10 w-10">
             <div
-              className="h-4 w-4 shrink-0 rounded-[4px] border"
+              className="absolute inset-0 rounded-full border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]"
               style={{
-                backgroundColor: pickPreviewHex,
-                borderColor: isDark ? "rgba(255,255,255,0.18)" : "rgba(17,17,17,0.14)",
+                borderColor: isDark ? "rgba(255,255,255,0.92)" : "rgba(17,17,17,0.92)",
+                backgroundColor: isDark ? "rgba(24,24,27,0.18)" : "rgba(255,255,255,0.22)",
               }}
             />
-            <div className="flex items-center gap-1.5">
-              <Pipette className="h-3.5 w-3.5 shrink-0" style={{ color: pickPreviewTextColor }} />
-              <span
-                className="max-w-[120px] truncate text-xs font-semibold"
-                style={{ color: pickPreviewTextColor }}
-              >
-                {pickPreviewLabel}
-              </span>
+            <div
+              className="absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded-full"
+              style={{ backgroundColor: isDark ? "rgba(255,255,255,0.9)" : "rgba(17,17,17,0.88)" }}
+            />
+            <div
+              className="absolute left-0 top-1/2 h-[2px] w-full -translate-y-1/2 rounded-full"
+              style={{ backgroundColor: isDark ? "rgba(255,255,255,0.9)" : "rgba(17,17,17,0.88)" }}
+            />
+            <div
+              className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-[4px] border-2 shadow-sm"
+              style={{
+                backgroundColor: pickPreviewHex,
+                borderColor: isDark ? "rgba(255,255,255,0.96)" : "rgba(17,17,17,0.9)",
+              }}
+            />
+            <div
+              className={clsx(
+                "absolute top-1/2 z-10 flex min-w-[112px] max-w-[172px] -translate-y-1/2 items-center gap-2 rounded-md border px-2.5 py-1.5 shadow-md backdrop-blur-sm",
+                isDark ? "border-white/12 bg-stone-950/92" : "border-stone-300 bg-white/95",
+              )}
+              style={{
+                left: "calc(100% + 14px)",
+              }}
+            >
+              <div
+                className="h-4 w-4 shrink-0 rounded-[4px] border"
+                style={{
+                  backgroundColor: pickPreviewHex,
+                  borderColor: isDark ? "rgba(255,255,255,0.18)" : "rgba(17,17,17,0.14)",
+                }}
+              />
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Pipette className="h-3.5 w-3.5 shrink-0" style={{ color: pickPreviewTextColor }} />
+                <span
+                  className="truncate text-xs font-semibold"
+                  style={{ color: pickPreviewTextColor }}
+                >
+                  {pickPreviewLabel}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -2359,4 +2540,21 @@ function clampPindouZoom(value: number) {
 
 function clampEditorZoom(value: number) {
   return Math.max(0.5, Math.min(6, Number(value.toFixed(2))));
+}
+
+function getNearestPaletteOptions(
+  color: { label: string; hex: string },
+  paletteOptions: Array<{ label: string; hex: string }>,
+  limit: number,
+) {
+  return paletteOptions
+    .filter((entry) => entry.label !== color.label)
+    .map((entry) => ({
+      label: entry.label,
+      hex: entry.hex,
+      distance: measureHexDistance255(color.hex, entry.hex),
+    }))
+    .sort((left, right) => left.distance - right.distance || left.label.localeCompare(right.label))
+    .slice(0, limit)
+    .map(({ label, hex }) => ({ label, hex }));
 }

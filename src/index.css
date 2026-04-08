@@ -46,3 +46,13 @@ img {
 ::selection {
   background: rgba(118, 67, 11, 0.18);
 }
+
+@keyframes pindou-indeterminate {
+  0% {
+    transform: translateX(-135%);
+  }
+
+  100% {
+    transform: translateX(335%);
+  }
+}

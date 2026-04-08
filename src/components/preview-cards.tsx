@@ -26,6 +26,7 @@ export function OriginalPreviewCard({
   title,
   file,
   url,
+  busy,
   emptyText,
   sourceChooseImage,
   sourceStayInTab,
@@ -42,6 +43,7 @@ export function OriginalPreviewCard({
   title: string;
   file: File | null;
   url: string | null;
+  busy: boolean;
   emptyText: string;
   sourceChooseImage: string;
   sourceStayInTab: string;
@@ -317,6 +319,20 @@ export function OriginalPreviewCard({
                 ) : null}
               </div>
             ) : null}
+          </div>
+        ) : file && busy ? (
+          <div className="flex w-full max-w-[320px] flex-col items-center px-6">
+            <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
+              <div
+                className={clsx(
+                  "absolute inset-y-0 w-1/3 rounded-full",
+                  isDark ? "bg-amber-200/90" : "bg-amber-700/85",
+                )}
+                style={{
+                  animation: "pindou-indeterminate 1.2s ease-in-out infinite",
+                }}
+              />
+            </div>
           </div>
         ) : (
           <p className={clsx("px-8 text-center text-sm", theme.cardMuted)}>{emptyText}</p>

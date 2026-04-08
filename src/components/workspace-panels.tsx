@@ -10,6 +10,7 @@ export function WorkspacePanels({
   inputUrl,
   cropRect,
   result,
+  busy,
   isDark,
   editTool,
   onEditToolChange,
@@ -28,6 +29,7 @@ export function WorkspacePanels({
   matchedCoveragePercent,
   onMatchedCoveragePercentChange,
   onToggleMatchedColor,
+  onReplaceMatchedColor,
   selectedLabel,
   onSelectedLabelChange,
   paletteOptions,
@@ -53,6 +55,7 @@ export function WorkspacePanels({
   inputUrl: string | null;
   cropRect: NormalizedCropRect | null;
   result: (ProcessResult & { url: string }) | null;
+  busy: boolean;
   isDark: boolean;
   editTool: "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
   onEditToolChange: (tool: "paint" | "erase" | "pick" | "fill" | "pan" | "zoom") => void;
@@ -71,6 +74,7 @@ export function WorkspacePanels({
   matchedCoveragePercent: number;
   onMatchedCoveragePercentChange: (value: number) => void;
   onToggleMatchedColor: (label: string) => void;
+  onReplaceMatchedColor: (sourceLabel: string, targetLabel: string) => void;
   selectedLabel: string;
   onSelectedLabelChange: (label: string) => void;
   paletteOptions: Array<{ label: string; hex: string }>;
@@ -143,6 +147,7 @@ export function WorkspacePanels({
             matchedCoveragePercent={matchedCoveragePercent}
             onMatchedCoveragePercentChange={onMatchedCoveragePercentChange}
             onToggleMatchedColor={onToggleMatchedColor}
+            onReplaceMatchedColor={onReplaceMatchedColor}
             pindouFlipHorizontal={pindouFlipHorizontal}
             onPindouFlipHorizontalChange={onPindouFlipHorizontalChange}
             pindouZoom={pindouZoom}
@@ -200,6 +205,7 @@ export function WorkspacePanels({
           matchedCoveragePercent={matchedCoveragePercent}
           onMatchedCoveragePercentChange={onMatchedCoveragePercentChange}
           onToggleMatchedColor={onToggleMatchedColor}
+          onReplaceMatchedColor={onReplaceMatchedColor}
           pindouFlipHorizontal={pindouFlipHorizontal}
           onPindouFlipHorizontalChange={onPindouFlipHorizontalChange}
           pindouZoom={pindouZoom}
@@ -214,11 +220,25 @@ export function WorkspacePanels({
         >
           <div
             className={clsx(
-              "rounded-[10px] border border-dashed px-5 py-10 text-center text-sm transition-colors",
+              "flex min-h-[220px] items-center justify-center rounded-[10px] border border-dashed px-5 py-10 text-center text-sm transition-colors",
               theme.emptyState,
             )}
           >
-            {t.readyHint}
+            {busy ? (
+              <div className="flex w-full max-w-[320px] flex-col items-center px-4">
+                <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
+                  <div
+                    className={clsx(
+                      "absolute inset-y-0 w-1/3 rounded-full",
+                      isDark ? "bg-amber-200/90" : "bg-amber-700/85",
+                    )}
+                    style={{ animation: "pindou-indeterminate 1.2s ease-in-out infinite" }}
+                  />
+                </div>
+              </div>
+            ) : (
+              t.readyHint
+            )}
           </div>
         </section>
       )}

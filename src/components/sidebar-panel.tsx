@@ -84,6 +84,7 @@ export function SidebarPanel({
           title={t.sourceTitle}
           file={file}
           url={inputUrl}
+          busy={busy}
           emptyText={t.sourceEmpty}
           sourceChooseImage={t.sourceChooseImage}
           sourceStayInTab={t.sourceStayInTab}
@@ -219,10 +220,6 @@ export function SidebarPanel({
             ))}
           </select>
         </section>
-
-        <div className={clsx("rounded-[10px] px-4 py-3 text-sm font-semibold transition-colors sm:rounded-[12px] xl:rounded-[14px] xl:px-5 xl:py-4", theme.statusBar(!file, busy))}>
-          {!file ? t.sourceEmpty : busy ? t.processing : t.generateChart}
-        </div>
       </div>
     </section>
   );

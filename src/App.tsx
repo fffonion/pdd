@@ -46,6 +46,39 @@ function readInitialThemeMode(): ThemeMode {
     : "system";
 }
 
+function getHeaderStatusLabel(options: {
+  file: File | null;
+  busy: boolean;
+  resultReady: boolean;
+  processingLabel: string;
+  updatedLabel: string;
+}) {
+  if (!options.file) {
+    return null;
+  }
+  if (options.busy) {
+    return options.processingLabel;
+  }
+  if (options.resultReady) {
+    return options.updatedLabel;
+  }
+  return null;
+}
+
+function isTypingElement(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    target.isContentEditable
+  );
+}
+
 export default function App() {
   const runIdRef = useRef(0);
   const paintActiveRef = useRef(false);
@@ -124,6 +157,13 @@ export default function App() {
     baseMatchedColors,
     disabledResultLabels,
   );
+  const headerStatusLabel = getHeaderStatusLabel({
+    file,
+    busy,
+    resultReady: Boolean(result),
+    processingLabel: t.processing,
+    updatedLabel: t.generateChart,
+  });
 
   function handleGridWidthChange(value: string) {
     setGridWidth(value);
@@ -155,9 +195,6 @@ export default function App() {
 
   function handleManualCropChange(nextCropRect: NormalizedCropRect | null) {
     setCropRect(nextCropRect);
-    if (nextCropRect) {
-      setGridMode("manual");
-    }
   }
 
   function applyManualFallbackGrid() {
@@ -180,6 +217,7 @@ export default function App() {
   function handleFileSelection(nextFile: File | null) {
     sourceMetaRunIdRef.current += 1;
     setError(null);
+    setBusy(Boolean(nextFile));
     setGridMode("auto");
     setGridWidth("33");
     setGridHeight("33");
@@ -313,7 +351,10 @@ export default function App() {
     setEditorHistoryIndex(0);
   }
 
-  function commitEditorSnapshot(nextCells: EditableCell[]) {
+  function commitEditorSnapshot(
+    nextCells: EditableCell[],
+    disabledLabelsOverride?: string[],
+  ) {
     editorDraftRef.current = null;
     setEditorDraftCells(null);
     const snapshot = cloneEditableCells(nextCells);
@@ -323,7 +364,10 @@ export default function App() {
     editorHistoryIndexRef.current = base.length - 1;
     setEditorHistory(base);
     setEditorHistoryIndex(base.length - 1);
-    void refreshEditedChart(snapshot);
+    if (disabledLabelsOverride) {
+      setDisabledResultLabels(disabledLabelsOverride);
+    }
+    void refreshEditedChart(snapshot, disabledLabelsOverride);
   }
 
   function stageEditorDraft(nextCells: EditableCell[]) {
@@ -389,6 +433,23 @@ export default function App() {
   function handleMatchedCoveragePercentChange(value: number) {
     const nextDisabledLabels = buildDisabledLabelsByCoverage(baseMatchedColors, value);
     applyDisabledResultLabels(nextDisabledLabels);
+  }
+
+  function replaceMatchedColor(sourceLabel: string, targetLabel: string) {
+    if (!result || !editorBaseCells.length || sourceLabel === targetLabel) {
+      return;
+    }
+
+    const replacement = buildReplacementCell(targetLabel, paletteOptions, "paint");
+    const nextCells = replaceLabelAcrossCells(editorBaseCells, sourceLabel, replacement);
+    if (cellsEqual(editorBaseCells, nextCells)) {
+      return;
+    }
+
+    const nextDisabledLabels = disabledResultLabels.filter(
+      (label) => label !== sourceLabel && label !== targetLabel,
+    );
+    commitEditorSnapshot(nextCells, nextDisabledLabels);
   }
 
   function applyCellEdit(index: number) {
@@ -514,6 +575,43 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+        return;
+      }
+      if (isTypingElement(event.target)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        if (editorHistoryIndexRef.current <= 0) {
+          return;
+        }
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      if (key === "y" || (key === "z" && event.shiftKey)) {
+        if (
+          editorHistoryIndexRef.current < 0 ||
+          editorHistoryIndexRef.current >= editorHistoryRef.current.length - 1
+        ) {
+          return;
+        }
+        event.preventDefault();
+        handleRedo();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
     setSelectedLabel((previous) => {
       if (paletteOptions.some((entry) => entry.label === previous)) {
         return previous;
@@ -610,6 +708,8 @@ export default function App() {
       void (async () => {
         setBusy(true);
         setError(null);
+        await waitForNextPaint();
+        await waitForNextPaint();
 
         try {
           const processed = await processImageFile(file, {
@@ -749,6 +849,7 @@ export default function App() {
             inputUrl={inputUrl}
             cropRect={cropRect}
             result={result}
+            busy={busy}
             isDark={isDark}
             editTool={editTool}
             onEditToolChange={setEditTool}
@@ -767,6 +868,7 @@ export default function App() {
             matchedCoveragePercent={matchedCoveragePercent}
             onMatchedCoveragePercentChange={handleMatchedCoveragePercentChange}
             onToggleMatchedColor={toggleDisabledMatchedColor}
+            onReplaceMatchedColor={replaceMatchedColor}
             selectedLabel={selectedLabel}
             onSelectedLabelChange={setSelectedLabel}
             paletteOptions={paletteOptions}
@@ -797,20 +899,27 @@ export default function App() {
     <main className={clsx("min-h-screen transition-colors", theme.page)}>
       <div className="mx-auto max-w-[1760px] px-4 pt-3 sm:pt-4 lg:px-6 lg:pt-6">
         <div className="flex flex-col gap-3 sm:gap-4 xl:flex-row xl:items-stretch xl:justify-between">
-        <div className={clsx("min-w-0 rounded-[10px] border px-3 py-2 backdrop-blur transition-colors sm:px-4 xl:flex-1", theme.controlShell)}>
+          <div className={clsx("min-w-0 rounded-[10px] border px-3 py-2 backdrop-blur transition-colors sm:px-4 xl:flex-1", theme.controlShell)}>
             <div className="flex min-w-0 flex-col gap-2 xl:h-full xl:flex-row xl:items-center xl:gap-4">
-              <div className="flex shrink-0 items-center gap-3">
-                <div className={clsx("flex h-9 w-9 items-center justify-center rounded-[8px] border", theme.pill)}>
-                  <BrandLogo className="h-5 w-5" />
+              <div className="flex min-w-0 shrink items-center justify-between gap-3">
+                <div className={clsx("flex h-11 w-11 items-center justify-center rounded-[8px] border", theme.pill)}>
+                  <BrandLogo className="h-9 w-9" />
                 </div>
-                <h1 className={clsx("text-xl font-semibold leading-none sm:text-2xl", theme.cardTitle)}>
-                  {APP_BRAND_TITLE}
-                </h1>
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                  <h1 className={clsx("truncate text-xl font-semibold leading-none sm:text-2xl", theme.cardTitle)}>
+                    {APP_BRAND_TITLE}
+                  </h1>
+                  {headerStatusLabel ? (
+                    <div className={clsx("shrink-0 rounded-[8px] px-3 py-1 text-xs font-semibold sm:text-sm", theme.statusBar(busy, false))}>
+                      {headerStatusLabel}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="flex max-w-full flex-wrap items-stretch justify-end gap-2 xl:shrink-0">
+          <div className="ml-auto flex max-w-full flex-wrap items-stretch justify-end gap-2 xl:shrink-0">
             <ThemeSwitch
               themeLabel={t.themeLabel}
               themeMode={themeMode}
@@ -869,7 +978,7 @@ export default function App() {
           </section>
         </div>
       ) : (
-        <div className="mx-auto grid h-[calc(100vh-5rem)] min-h-0 max-w-[1760px] gap-4 overflow-hidden px-4 pb-6 pt-4 xl:grid-cols-[minmax(320px,22vw)_minmax(0,1fr)] xl:gap-6 lg:px-6 lg:pt-4">
+        <div className="mx-auto grid min-h-0 max-w-[1760px] gap-4 px-4 pb-6 pt-4 xl:h-[calc(100vh-5rem)] xl:grid-cols-[minmax(320px,22vw)_minmax(0,1fr)] xl:gap-6 xl:overflow-hidden lg:px-6 lg:pt-4">
           <SidebarPanel
             t={t}
             file={file}
@@ -907,6 +1016,7 @@ export default function App() {
             inputUrl={inputUrl}
             cropRect={cropRect}
             result={result}
+            busy={busy}
             isDark={isDark}
             editTool={editTool}
             onEditToolChange={setEditTool}
@@ -925,6 +1035,7 @@ export default function App() {
             matchedCoveragePercent={matchedCoveragePercent}
             onMatchedCoveragePercentChange={handleMatchedCoveragePercentChange}
             onToggleMatchedColor={toggleDisabledMatchedColor}
+            onReplaceMatchedColor={replaceMatchedColor}
             selectedLabel={selectedLabel}
             onSelectedLabelChange={setSelectedLabel}
             paletteOptions={paletteOptions}
@@ -949,6 +1060,12 @@ export default function App() {
       )}
     </main>
   );
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 function getActiveAspectRatio(
@@ -1172,6 +1289,16 @@ function replaceBrushArea(
   }
 
   return nextCells;
+}
+
+function replaceLabelAcrossCells(
+  cells: EditableCell[],
+  sourceLabel: string,
+  replacement: EditableCell,
+) {
+  return cells.map((cell) =>
+    cell.label === sourceLabel ? { ...replacement } : { ...cell },
+  );
 }
 
 function floodFillCells(
