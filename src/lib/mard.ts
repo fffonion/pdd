@@ -1150,7 +1150,7 @@ function detectLegendSeparatedChart(image: RasterImage): ChartImportDetection | 
     return null;
   }
   const framedBoard = cropRaster(boardRegion, frameCrop);
-  const boardDetection = detectChartBoardBySquareCells(framedBoard);
+  const boardDetection = detectPreferredChartBoardImport(framedBoard, "chart-legend");
   if (!boardDetection) {
     return null;
   }
@@ -1159,7 +1159,7 @@ function detectLegendSeparatedChart(image: RasterImage): ChartImportDetection | 
     logical: boardDetection.logical,
     gridWidth: boardDetection.gridWidth,
     gridHeight: boardDetection.gridHeight,
-    mode: `${boardDetection.mode}+chart-legend`,
+    mode: boardDetection.mode,
     cropBox: offsetCropBox(
       [0, 0, image.width, legendTop],
       offsetCropBox(frameCrop, boardDetection.cropBox),
@@ -1188,7 +1188,7 @@ function detectFramedChartImport(
   }
 
   const framedBoard = cropRaster(image, frameCrop);
-  const boardDetection = detectChartBoardBySquareCells(framedBoard);
+  const boardDetection = detectPreferredChartBoardImport(framedBoard, "chart-frame");
   if (!boardDetection) {
     return null;
   }
@@ -1197,7 +1197,7 @@ function detectFramedChartImport(
     logical: boardDetection.logical,
     gridWidth: boardDetection.gridWidth,
     gridHeight: boardDetection.gridHeight,
-    mode: `${boardDetection.mode}+chart-frame`,
+    mode: boardDetection.mode,
     cropBox: offsetCropBox(frameCrop, boardDetection.cropBox),
   };
 }
@@ -1309,48 +1309,142 @@ function detectBoardRegionImport(
     }
     seenCandidateKeys.add(key);
 
-    const detections = [
-      buildChartImportFromPixelDetection(
-        candidate.region,
-        detectLegendBoardFromAxisLabels(candidate.region),
-        suffix,
-      ),
-      detectGuideLineBoardImport(candidate.region, suffix),
-      detectChartBoardBySquareCells(candidate.region),
-      buildChartImportFromPixelDetection(
-        candidate.region,
-        detectPeriodicLegendBoard(candidate.region),
-        suffix,
-      ),
-      buildChartImportFromPixelDetection(
-        candidate.region,
-        detectLightSeparatorPixelArt(candidate.region),
-        suffix,
-      ),
-    ].filter((value): value is ChartImportDetection => Boolean(value));
-
-    for (const detection of detections) {
-      const score =
-        scoreBoardRegionImportCandidate(candidate.region, detection) +
-        scoreBoardRegionCropPlacement(candidate.region, detection.cropBox);
-      if (score <= bestScore) {
-        continue;
-      }
-
-      best = {
-        logical: detection.logical,
-        gridWidth: detection.gridWidth,
-        gridHeight: detection.gridHeight,
-        mode: detection.mode.includes(`+${suffix}`)
-          ? detection.mode
-          : `${detection.mode}+${suffix}`,
-        cropBox: offsetCropBox(candidate.baseCrop, detection.cropBox),
-      };
-      bestScore = score;
+    const detection = detectPreferredChartBoardImport(candidate.region, suffix);
+    if (!detection) {
+      continue;
     }
+
+    const score =
+      scoreBoardRegionImportCandidate(candidate.region, detection) +
+      scoreBoardRegionCropPlacement(candidate.region, detection.cropBox);
+    if (score <= bestScore) {
+      continue;
+    }
+
+    best = {
+      logical: detection.logical,
+      gridWidth: detection.gridWidth,
+      gridHeight: detection.gridHeight,
+      mode: detection.mode.includes(`+${suffix}`)
+        ? detection.mode
+        : `${detection.mode}+${suffix}`,
+      cropBox: offsetCropBox(candidate.baseCrop, detection.cropBox),
+    };
+    bestScore = score;
   }
 
   return best;
+}
+
+function detectPreferredChartBoardImport(
+  boardRegion: RasterImage,
+  suffix: string,
+): ChartImportDetection | null {
+  const fastDetections = buildFastChartBoardImports(boardRegion, suffix);
+  const confidentFastDetections = fastDetections.filter((detection) =>
+    isHighConfidenceFastBoardImport(boardRegion, detection),
+  );
+  const bestConfidentFast = pickBestChartBoardImport(boardRegion, confidentFastDetections);
+  if (bestConfidentFast) {
+    return bestConfidentFast;
+  }
+
+  const squareCells = detectChartBoardBySquareCells(boardRegion);
+  const candidates = squareCells
+    ? [
+        ...fastDetections,
+        {
+          logical: squareCells.logical,
+          gridWidth: squareCells.gridWidth,
+          gridHeight: squareCells.gridHeight,
+          mode: normalizeChartBoardImportMode(squareCells.mode, suffix),
+          cropBox: squareCells.cropBox,
+        },
+      ]
+    : fastDetections;
+
+  return pickBestChartBoardImport(boardRegion, candidates);
+}
+
+function buildFastChartBoardImports(
+  boardRegion: RasterImage,
+  suffix: string,
+) {
+  return [
+    buildChartImportFromPixelDetection(
+      boardRegion,
+      detectLegendBoardFromAxisLabels(boardRegion),
+      suffix,
+    ),
+    detectGuideLineBoardImport(boardRegion, suffix),
+    buildChartImportFromPixelDetection(
+      boardRegion,
+      detectPeriodicLegendBoard(boardRegion),
+      suffix,
+    ),
+    buildChartImportFromPixelDetection(
+      boardRegion,
+      detectLightSeparatorPixelArt(boardRegion),
+      suffix,
+    ),
+  ].filter((value): value is ChartImportDetection => Boolean(value));
+}
+
+function pickBestChartBoardImport(
+  boardRegion: RasterImage,
+  detections: ChartImportDetection[],
+) {
+  let best: ChartImportDetection | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const detection of detections) {
+    const score =
+      scoreBoardRegionImportCandidate(boardRegion, detection) +
+      scoreBoardRegionCropPlacement(boardRegion, detection.cropBox);
+    if (score <= bestScore) {
+      continue;
+    }
+    best = detection;
+    bestScore = score;
+  }
+  return best;
+}
+
+function normalizeChartBoardImportMode(mode: string, suffix: string) {
+  return mode.includes(`+${suffix}`) ? mode : `${mode}+${suffix}`;
+}
+
+function isHighConfidenceFastBoardImport(
+  boardRegion: RasterImage,
+  detection: ChartImportDetection,
+) {
+  if (detection.mode.includes("guide-lines")) {
+    return true;
+  }
+
+  if (detection.mode.includes("axis-label")) {
+    return isConfidentAxisLabelLegendBoardDetection(boardRegion, detection);
+  }
+
+  return false;
+}
+
+function isConfidentAxisLabelLegendBoardDetection(
+  boardRegion: RasterImage,
+  detection: Pick<ChartImportDetection, "gridWidth" | "gridHeight" | "cropBox" | "mode">,
+) {
+  const cropWidth = detection.cropBox[2] - detection.cropBox[0];
+  const cropHeight = detection.cropBox[3] - detection.cropBox[1];
+  const areaRatio = (cropWidth * cropHeight) / Math.max(1, boardRegion.width * boardRegion.height);
+  const cellWidth = cropWidth / Math.max(1, detection.gridWidth);
+  const cellHeight = cropHeight / Math.max(1, detection.gridHeight);
+  const cellAspect = Math.max(cellWidth, cellHeight) / Math.max(1e-6, Math.min(cellWidth, cellHeight));
+  return (
+    detection.mode.includes("axis-label") &&
+    areaRatio >= 0.42 &&
+    cellWidth >= 6 &&
+    cellHeight >= 6 &&
+    cellAspect <= 1.35
+  );
 }
 
 function scoreBoardRegionImportCandidate(
@@ -2111,25 +2205,6 @@ function detectLooseContentBox(image: RasterImage): CropBox | null {
 
 function detectBestLegendBoardCandidate(boardRegion: RasterImage) {
   return detectLegendBoardFromAxisLabelsCandidate(boardRegion);
-}
-
-function isConfidentAxisLabelLegendBoard(
-  boardRegion: RasterImage,
-  candidate: ChartImportDetection & { score: number },
-) {
-  const cropWidth = candidate.cropBox[2] - candidate.cropBox[0];
-  const cropHeight = candidate.cropBox[3] - candidate.cropBox[1];
-  const areaRatio = (cropWidth * cropHeight) / Math.max(1, boardRegion.width * boardRegion.height);
-  const cellWidth = cropWidth / Math.max(1, candidate.gridWidth);
-  const cellHeight = cropHeight / Math.max(1, candidate.gridHeight);
-  const cellAspect = Math.max(cellWidth, cellHeight) / Math.max(1e-6, Math.min(cellWidth, cellHeight));
-  return (
-    candidate.mode.includes("axis-label") &&
-    areaRatio >= 0.42 &&
-    cellWidth >= 6 &&
-    cellHeight >= 6 &&
-    cellAspect <= 1.35
-  );
 }
 
 function detectLegendBoardFromAxisLabelsCandidate(
