@@ -52,6 +52,11 @@ export interface Messages {
   downloadPng: string;
   editorTitle: string;
   editorSubtitle: string;
+  editorTabEdit: string;
+  editorTabPindou: string;
+  pindouModeHint: string;
+  pindouFocusView: string;
+  pindouExitFocus: string;
   toolLabel: string;
   toolPaint: string;
   toolErase: string;
@@ -94,7 +99,7 @@ export const messages: Record<Locale, Messages> = {
   "zh-CN": {
     appBadge: "图纸转换",
     appTitle: "拼豆图纸转换",
-    appDescription: "上传图片，自动判格、降色、匹配所选色系，并生成带色号的成品图纸。\n全部处理都在浏览器内完成，不会上传到服务器。",
+    appDescription: "上传图片，自动判格、降色、匹配所选色系，并生成带色号的成品图纸。",
     languageLabel: "语言",
     languageChinese: "中文",
     languageEnglish: "English",
@@ -142,7 +147,12 @@ export const messages: Record<Locale, Messages> = {
     resultSubtitle: "浅灰分隔线，黑色外框，底部颜色统计。",
     downloadPng: "下载图纸",
     editorTitle: "像素编辑",
-    editorSubtitle: "点击格子可改色，或删掉/补上任意像素。",
+    editorSubtitle: "点击格子可改色，或删除、补上任意像素。",
+    editorTabEdit: "像素编辑",
+    editorTabPindou: "拼豆模式",
+    pindouModeHint: "点击底部颜色或图纸格子，可单独高亮一种颜色。",
+    pindouFocusView: "专注查看图纸",
+    pindouExitFocus: "退出专注查看",
     toolLabel: "工具",
     toolPaint: "画笔",
     toolErase: "橡皮",
@@ -191,7 +201,7 @@ export const messages: Record<Locale, Messages> = {
   "en-US": {
     appBadge: "Chart Converter",
     appTitle: "Bead Chart Converter",
-    appDescription: "Upload an image, detect or build the grid, match it to the selected color system, and render a labeled chart.\nEverything is processed in the browser and is not uploaded to a server.",
+    appDescription: "Upload an image, detect or build the grid, match it to the selected color system, and render a labeled chart.",
     languageLabel: "Language",
     languageChinese: "中文",
     languageEnglish: "English",
@@ -240,6 +250,11 @@ export const messages: Record<Locale, Messages> = {
     downloadPng: "Download Chart",
     editorTitle: "Pixel Editor",
     editorSubtitle: "Click cells to recolor them, or remove and add any pixel.",
+    editorTabEdit: "Pixel Edit",
+    editorTabPindou: "Pindou Mode",
+    pindouModeHint: "Click a color or a grid cell to highlight just that color.",
+    pindouFocusView: "Focus on sketch",
+    pindouExitFocus: "Exit focus view",
     toolLabel: "Tool",
     toolPaint: "Paint",
     toolErase: "Erase",
@@ -264,7 +279,7 @@ export const messages: Record<Locale, Messages> = {
     paletteColorsUsedLabel: "Palette Colors Used",
     matchedColorsTitle: "Matched Colors",
     matchedColorsHint: "Click a color to disable or restore it",
-    labelsCount: (count) => `${count} labels`,
+    labelsCount: (count) => `${count} colors`,
     readyHint: "Upload an image and the result will appear here.",
     manualGridValidation: "Manual mode requires positive grid width and grid height.",
     processingFailed: "Conversion failed.",

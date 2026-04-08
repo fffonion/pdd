@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ImageUp, Shapes } from "lucide-react";
+import { ImageUp, Minimize2, Shapes } from "lucide-react";
 import { startTransition, useEffect, useRef, useState } from "react";
 import { LanguageSwitch, ThemeSwitch } from "./components/controls";
 import { SidebarPanel } from "./components/sidebar-panel";
@@ -82,6 +82,7 @@ export default function App() {
   const [disabledResultLabels, setDisabledResultLabels] = useState<string[]>([]);
   const [editorHistory, setEditorHistory] = useState<EditableCell[][]>([]);
   const [editorHistoryIndex, setEditorHistoryIndex] = useState(-1);
+  const [pindouFocusViewOpen, setPindouFocusViewOpen] = useState(false);
 
   const paletteOptions = getPaletteOptions(colorSystemId);
   const [selectedLabel, setSelectedLabel] = useState<string>(paletteOptions[0]?.label ?? "A1");
@@ -161,6 +162,7 @@ export default function App() {
     setCropMode(false);
     setSourceSize(null);
     setSourceComplexity(52);
+    setPindouFocusViewOpen(false);
     setDisabledResultLabels([]);
     editorHistoryRef.current = [];
     editorHistoryIndexRef.current = -1;
@@ -635,6 +637,57 @@ export default function App() {
     locale,
   ]);
 
+  if (file && pindouFocusViewOpen) {
+    return (
+      <main className={clsx("min-h-screen transition-colors", theme.page)}>
+        <button
+          className={clsx("fixed right-4 top-4 z-[120] flex h-10 w-10 items-center justify-center rounded-md border transition sm:right-6 sm:top-6", theme.pill)}
+          onClick={() => setPindouFocusViewOpen(false)}
+          title={t.pindouExitFocus}
+          type="button"
+        >
+          <Minimize2 className="h-4 w-4" />
+        </button>
+
+        <div className="min-h-screen w-full p-4 sm:p-6">
+          <WorkspacePanels
+            t={t}
+            inputUrl={inputUrl}
+            cropRect={cropRect}
+            result={result}
+            isDark={isDark}
+            editTool={editTool}
+            onEditToolChange={setEditTool}
+            overlayEnabled={overlayEnabled}
+            onOverlayEnabledChange={setOverlayEnabled}
+            fillTolerance={fillTolerance}
+            onFillToleranceChange={setFillTolerance}
+            brushSize={brushSize}
+            onBrushSizeChange={setBrushSize}
+            disabledResultLabels={disabledResultLabels}
+            matchedColorsBase={displayMatchedColors}
+            matchedCoveragePercent={matchedCoveragePercent}
+            onMatchedCoveragePercentChange={handleMatchedCoveragePercentChange}
+            onToggleMatchedColor={toggleDisabledMatchedColor}
+            selectedLabel={selectedLabel}
+            onSelectedLabelChange={setSelectedLabel}
+            paletteOptions={paletteOptions}
+            currentCells={renderedEditorCells}
+            onApplyCell={applyCellEdit}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={editorHistoryIndex > 0}
+            canRedo={editorHistoryIndex >= 0 && editorHistoryIndex < editorHistory.length - 1}
+            paintActiveRef={paintActiveRef}
+            focusViewOpen={pindouFocusViewOpen}
+            onFocusViewOpenChange={setPindouFocusViewOpen}
+            focusOnly
+          />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className={clsx("min-h-screen transition-colors", theme.page)}>
       <div className="mx-auto max-w-[1600px] px-4 pt-3 sm:pt-4 lg:px-6 lg:pt-6">
@@ -769,11 +822,13 @@ export default function App() {
             onApplyCell={applyCellEdit}
             onUndo={handleUndo}
             onRedo={handleRedo}
-            canUndo={editorHistoryIndex > 0}
-            canRedo={editorHistoryIndex >= 0 && editorHistoryIndex < editorHistory.length - 1}
-            paintActiveRef={paintActiveRef}
-          />
-        </div>
+          canUndo={editorHistoryIndex > 0}
+          canRedo={editorHistoryIndex >= 0 && editorHistoryIndex < editorHistory.length - 1}
+          paintActiveRef={paintActiveRef}
+          focusViewOpen={pindouFocusViewOpen}
+          onFocusViewOpenChange={setPindouFocusViewOpen}
+        />
+      </div>
       )}
     </main>
   );

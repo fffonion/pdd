@@ -1,9 +1,11 @@
+import * as Tabs from "@radix-ui/react-tabs";
 import * as Slider from "@radix-ui/react-slider";
 import clsx from "clsx";
 import {
   Eraser,
   Eye,
   EyeOff,
+  Maximize2,
   PaintBucket,
   Pencil,
   Pipette,
@@ -16,6 +18,7 @@ import type { EditableCell, NormalizedCropRect } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
 
 type EditTool = "paint" | "erase" | "pick" | "fill";
+type EditorPanelMode = "edit" | "pindou";
 
 export function PixelEditorPanel({
   t,
@@ -43,6 +46,9 @@ export function PixelEditorPanel({
   canUndo,
   canRedo,
   paintActiveRef,
+  focusViewOpen,
+  onFocusViewOpenChange,
+  focusOnly = false,
 }: {
   t: Messages;
   isDark: boolean;
@@ -69,8 +75,17 @@ export function PixelEditorPanel({
   canUndo: boolean;
   canRedo: boolean;
   paintActiveRef: MutableRefObject<boolean>;
+  focusViewOpen: boolean;
+  onFocusViewOpenChange: (value: boolean) => void;
+  focusOnly?: boolean;
 }) {
   const theme = getThemeClasses(isDark);
+  const [panelMode, setPanelMode] = useState<EditorPanelMode>(focusOnly ? "pindou" : "edit");
+  const [focusedSketchLabel, setFocusedSketchLabel] = useState<string | null>(null);
+  const pindouColors = useMemo(
+    () => summarizeStageColors(cells, paletteOptions),
+    [cells, paletteOptions],
+  );
 
   const tools: Array<{
     id: EditTool;
@@ -83,93 +98,264 @@ export function PixelEditorPanel({
     { id: "fill", label: t.toolFill, icon: PaintBucket },
   ];
 
+  useEffect(() => {
+    if (!focusedSketchLabel) {
+      return;
+    }
+
+    if (!cells.some((cell) => cell.label === focusedSketchLabel)) {
+      setFocusedSketchLabel(null);
+    }
+  }, [cells, focusedSketchLabel]);
+
+  useEffect(() => {
+    if (focusOnly && panelMode !== "pindou") {
+      setPanelMode("pindou");
+    }
+  }, [focusOnly, panelMode]);
+
   return (
-    <section className={clsx("rounded-[14px] border p-3 backdrop-blur transition-colors sm:rounded-[16px] sm:p-4 xl:rounded-[18px]", theme.panel)}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.editorTitle}</p>
-          <p className={clsx("text-xs", theme.cardMuted)}>{t.editorSubtitle}</p>
-        </div>
-        <p className={clsx("text-xs", theme.cardMuted)}>{t.pixelEditorHint}</p>
-      </div>
+    focusOnly ? (
+      <PindouModePanel
+        t={t}
+        isDark={isDark}
+        cells={cells}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+        focusedSketchLabel={focusedSketchLabel}
+        onFocusedSketchLabelChange={setFocusedSketchLabel}
+        pindouColors={pindouColors}
+        paintActiveRef={paintActiveRef}
+        focusViewOpen={focusViewOpen}
+        onFocusViewOpenChange={onFocusViewOpenChange}
+        focusOnly
+      />
+    ) : (
+    <Tabs.Root className="min-w-0" value={panelMode} onValueChange={(value) => setPanelMode(value as EditorPanelMode)}>
+      <Tabs.List className="relative z-10 mb-[-1px] flex min-w-0 items-end gap-1 overflow-x-auto">
+        {([
+          ["edit", t.editorTabEdit],
+          ["pindou", t.editorTabPindou],
+        ] as const).map(([value, label]) => (
+          <Tabs.Trigger
+            key={value}
+            value={value}
+            className={clsx(
+              "shrink-0 rounded-t-[10px] border border-b-0 px-4 py-2 text-sm font-semibold outline-none transition",
+              panelMode === value
+                ? clsx(theme.card, theme.cardTitle, "translate-y-px")
+                : clsx(theme.pill, theme.cardMuted, "opacity-85 hover:opacity-100"),
+            )}
+          >
+            {label}
+          </Tabs.Trigger>
+        ))}
+      </Tabs.List>
 
-      <div className="mt-4 grid min-w-0 gap-3 xl:grid-cols-[56px_minmax(0,1fr)] xl:gap-4">
-        <section className={clsx("min-w-0 rounded-[10px] border p-2 transition-colors xl:min-h-[520px]", theme.card)}>
-          <div className="flex w-full gap-2 overflow-x-auto xl:flex-col xl:overflow-visible">
-            {tools.map((tool) => (
-              <ToolIconButton
-                key={tool.id}
-                active={editTool === tool.id}
-                icon={tool.icon}
+      <section className={clsx("rounded-[14px] rounded-tl-none border p-3 backdrop-blur transition-colors sm:rounded-[16px] sm:rounded-tl-none sm:p-4 xl:rounded-[18px] xl:rounded-tl-none", theme.panel)}>
+        <Tabs.Content value="edit" className="mt-4">
+          <div className="grid min-w-0 gap-3 xl:grid-cols-[56px_minmax(0,1fr)] xl:gap-4">
+            <section className={clsx("min-w-0 rounded-[10px] border p-2 transition-colors xl:min-h-[520px]", theme.card)}>
+              <div className="flex w-full gap-2 overflow-x-auto xl:flex-col xl:overflow-visible">
+                {tools.map((tool) => (
+                  <ToolIconButton
+                    key={tool.id}
+                    active={editTool === tool.id}
+                    icon={tool.icon}
+                    isDark={isDark}
+                    label={tool.label}
+                    onClick={() => onEditToolChange(tool.id)}
+                  />
+                ))}
+                <div className={clsx("hidden h-px xl:block", theme.divider)} />
+                <ToolIconButton
+                  active={false}
+                  disabled={!canUndo}
+                  icon={Undo2}
+                  isDark={isDark}
+                  label={t.toolUndo}
+                  onClick={onUndo}
+                />
+                <ToolIconButton
+                  active={false}
+                  disabled={!canRedo}
+                  icon={Redo2}
+                  isDark={isDark}
+                  label={t.toolRedo}
+                  onClick={onRedo}
+                />
+                <div className={clsx("hidden h-px xl:block", theme.divider)} />
+                <ToolIconButton
+                  active={overlayEnabled}
+                  icon={overlayEnabled ? Eye : EyeOff}
+                  isDark={isDark}
+                  label={t.overlayToggle}
+                  onClick={() => onOverlayEnabledChange(!overlayEnabled)}
+                />
+              </div>
+            </section>
+
+            <section className={clsx("min-w-0 rounded-[10px] border p-3 transition-colors sm:p-4 xl:min-h-[520px]", theme.card)}>
+              <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+                <div>
+                  <p className={clsx("text-xs uppercase tracking-[0.18em]", theme.cardMuted)}>{t.editorStage}</p>
+                  <p className={clsx("mt-1 text-xs", theme.cardMuted)}>
+                    {gridWidth} x {gridHeight}
+                  </p>
+                </div>
+                <ContextToolStrip
+                  t={t}
+                  isDark={isDark}
+                  editTool={editTool}
+                  selectedLabel={selectedLabel}
+                  selectedHex={selectedHex}
+                  paletteOptions={paletteOptions}
+                  brushSize={brushSize}
+                  onBrushSizeChange={onBrushSizeChange}
+                  fillTolerance={fillTolerance}
+                  onFillToleranceChange={onFillToleranceChange}
+                  onEditToolChange={onEditToolChange}
+                  onSelectedLabelChange={onSelectedLabelChange}
+                />
+              </div>
+
+              <EditorStage
+                cells={cells}
+                gridWidth={gridWidth}
+                gridHeight={gridHeight}
+                inputUrl={inputUrl}
+                overlayCropRect={overlayCropRect}
+                overlayEnabled={overlayEnabled}
                 isDark={isDark}
-                label={tool.label}
-                onClick={() => onEditToolChange(tool.id)}
+                stageMode="edit"
+                onApplyCell={onApplyCell}
+                paintActiveRef={paintActiveRef}
               />
-            ))}
-            <div className={clsx("hidden h-px xl:block", theme.divider)} />
-            <ToolIconButton
-              active={false}
-              disabled={!canUndo}
-              icon={Undo2}
-              isDark={isDark}
-              label={t.toolUndo}
-              onClick={onUndo}
-            />
-            <ToolIconButton
-              active={false}
-              disabled={!canRedo}
-              icon={Redo2}
-              isDark={isDark}
-              label={t.toolRedo}
-              onClick={onRedo}
-            />
-            <div className={clsx("hidden h-px xl:block", theme.divider)} />
-            <ToolIconButton
-              active={overlayEnabled}
-              icon={overlayEnabled ? Eye : EyeOff}
-              isDark={isDark}
-              label={t.overlayToggle}
-              onClick={() => onOverlayEnabledChange(!overlayEnabled)}
-            />
+            </section>
           </div>
-        </section>
+        </Tabs.Content>
 
-        <section className={clsx("min-w-0 rounded-[10px] border p-3 transition-colors sm:p-4 xl:min-h-[520px]", theme.card)}>
-          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-            <div>
-              <p className={clsx("text-xs uppercase tracking-[0.18em]", theme.cardMuted)}>{t.editorStage}</p>
-              <p className={clsx("mt-1 text-xs", theme.cardMuted)}>
-                {gridWidth} x {gridHeight}
-              </p>
-            </div>
-            <ContextToolStrip
-              t={t}
-              isDark={isDark}
-              editTool={editTool}
-              selectedLabel={selectedLabel}
-              selectedHex={selectedHex}
-              paletteOptions={paletteOptions}
-              brushSize={brushSize}
-              onBrushSizeChange={onBrushSizeChange}
-              fillTolerance={fillTolerance}
-              onFillToleranceChange={onFillToleranceChange}
-              onEditToolChange={onEditToolChange}
-              onSelectedLabelChange={onSelectedLabelChange}
-            />
-          </div>
-
-          <EditorStage
+        <Tabs.Content value="pindou" className="mt-4">
+          <PindouModePanel
+            t={t}
+            isDark={isDark}
             cells={cells}
             gridWidth={gridWidth}
             gridHeight={gridHeight}
-            inputUrl={inputUrl}
-            overlayCropRect={overlayCropRect}
-            overlayEnabled={overlayEnabled}
-            isDark={isDark}
-            onApplyCell={onApplyCell}
+            focusedSketchLabel={focusedSketchLabel}
+            onFocusedSketchLabelChange={setFocusedSketchLabel}
+            pindouColors={pindouColors}
             paintActiveRef={paintActiveRef}
+            focusViewOpen={focusViewOpen}
+            onFocusViewOpenChange={onFocusViewOpenChange}
           />
-        </section>
+        </Tabs.Content>
+      </section>
+    </Tabs.Root>
+    )
+  );
+}
+
+function PindouModePanel({
+  t,
+  isDark,
+  cells,
+  gridWidth,
+  gridHeight,
+  focusedSketchLabel,
+  onFocusedSketchLabelChange,
+  pindouColors,
+  paintActiveRef,
+  focusViewOpen,
+  onFocusViewOpenChange,
+  focusOnly = false,
+}: {
+  t: Messages;
+  isDark: boolean;
+  cells: EditableCell[];
+  gridWidth: number;
+  gridHeight: number;
+  focusedSketchLabel: string | null;
+  onFocusedSketchLabelChange: (label: string | null) => void;
+  pindouColors: Array<{ label: string; count: number; hex: string }>;
+  paintActiveRef: MutableRefObject<boolean>;
+  focusViewOpen: boolean;
+  onFocusViewOpenChange: (value: boolean) => void;
+  focusOnly?: boolean;
+}) {
+  const theme = getThemeClasses(isDark);
+
+  return (
+    <section
+      className={clsx(
+        "min-w-0",
+        focusOnly
+          ? "flex min-h-full w-full max-w-[1600px] flex-col justify-center"
+          : clsx("rounded-[10px] border p-3 transition-colors sm:p-4", theme.card),
+      )}
+    >
+      {!focusOnly ? (
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div>
+            <p className={clsx("text-xs uppercase tracking-[0.18em]", theme.cardMuted)}>{t.editorStage}</p>
+            <p className={clsx("mt-1 text-xs", theme.cardMuted)}>
+              {gridWidth} x {gridHeight}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <p className={clsx("text-xs", theme.cardMuted)}>{t.pindouModeHint}</p>
+            <button
+              className={clsx("flex h-9 w-9 items-center justify-center rounded-md border transition", theme.pill)}
+              onClick={() => onFocusViewOpenChange(!focusViewOpen)}
+              title={t.pindouFocusView}
+              type="button"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <EditorStage
+        cells={cells}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+        inputUrl={null}
+        overlayCropRect={null}
+        overlayEnabled={false}
+        isDark={isDark}
+        stageMode="pindou"
+        focusedLabel={focusedSketchLabel}
+        onFocusLabelChange={onFocusedSketchLabelChange}
+        paintActiveRef={paintActiveRef}
+        focusOnly={focusOnly}
+      />
+
+      <div className={clsx("mt-4 flex flex-wrap gap-2 overflow-auto pr-1", focusOnly ? "max-h-[unset] justify-center" : "max-h-[220px]")}>
+        {pindouColors.map((color) => {
+          const active = focusedSketchLabel === color.label;
+          return (
+            <button
+              key={color.label}
+              className={clsx(
+                "flex items-center gap-3 rounded-md border px-3 py-2 transition-colors",
+                active ? theme.controlButtonActive : theme.pill,
+              )}
+              onClick={() => onFocusedSketchLabelChange(active ? null : color.label)}
+              type="button"
+              title={color.label}
+            >
+              <span
+                className="h-5 w-5 rounded-full border border-black/10"
+                style={{ backgroundColor: color.hex }}
+              />
+              <span className={clsx("text-sm font-semibold", active ? "" : theme.cardTitle)}>
+                {color.label}
+              </span>
+              <span className={clsx("text-xs", active ? "" : theme.cardMuted)}>{color.count}</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -454,8 +640,12 @@ function EditorStage({
   overlayCropRect,
   overlayEnabled,
   isDark,
+  stageMode,
+  focusedLabel,
+  onFocusLabelChange,
   onApplyCell,
   paintActiveRef,
+  focusOnly = false,
 }: {
   cells: EditableCell[];
   gridWidth: number;
@@ -464,8 +654,12 @@ function EditorStage({
   overlayCropRect: NormalizedCropRect | null;
   overlayEnabled: boolean;
   isDark: boolean;
-  onApplyCell: (index: number) => void;
+  stageMode: EditorPanelMode;
+  focusedLabel?: string | null;
+  onFocusLabelChange?: (label: string | null) => void;
+  onApplyCell?: (index: number) => void;
   paintActiveRef: MutableRefObject<boolean>;
+  focusOnly?: boolean;
 }) {
   const theme = getThemeClasses(isDark);
   const stageViewportRef = useRef<HTMLDivElement | null>(null);
@@ -516,84 +710,374 @@ function EditorStage({
   );
   const scaledStageWidth = Math.min(stageWidth * stageScale, Math.max(0, stageViewport.width));
   const scaledStageHeight = stageHeight * stageScale;
+  const axisGutter = stageMode === "pindou" ? Math.max(22, Math.round(26 * stageScale)) : 0;
+  const topGutter = stageMode === "pindou" ? axisGutter : 0;
+  const leftGutter = stageMode === "pindou" ? axisGutter : 0;
 
   return (
     <div
       ref={stageViewportRef}
-      className={clsx("mt-4 w-full min-w-0 max-w-full overflow-hidden rounded-[10px] border p-2 sm:p-3", theme.previewStage)}
+      className={clsx(
+        "mt-4 w-full min-w-0 max-w-full overflow-hidden rounded-[10px] border p-2 sm:p-3",
+        focusOnly ? "flex-1" : "",
+        theme.previewStage,
+      )}
     >
-      <div className="flex justify-center">
+      <div className={clsx("flex", focusOnly ? "min-h-full items-center justify-center" : "justify-center")}>
         <div
-          className="relative w-fit max-w-full overflow-hidden rounded-[8px]"
-          style={{ width: `${scaledStageWidth}px`, height: `${scaledStageHeight}px` }}
+          className="relative w-fit max-w-full"
+          style={{
+            width: `${scaledStageWidth + leftGutter}px`,
+            height: `${scaledStageHeight + topGutter}px`,
+          }}
         >
+          {stageMode === "pindou" ? (
+            <>
+              <div
+                className="absolute left-0 top-0"
+                style={{
+                  width: `${leftGutter}px`,
+                  height: `${topGutter}px`,
+                }}
+              />
+              <AxisLabels
+                axis="x"
+                gridCount={gridWidth}
+                offset={leftGutter}
+                gutter={topGutter}
+                stageScale={stageScale}
+                stageLength={scaledStageWidth}
+                isDark={isDark}
+              />
+              <AxisLabels
+                axis="y"
+                gridCount={gridHeight}
+                offset={topGutter}
+                gutter={leftGutter}
+                stageScale={stageScale}
+                stageLength={scaledStageHeight}
+                isDark={isDark}
+              />
+            </>
+          ) : null}
+
           <div
-            className="absolute left-0 top-0 origin-top-left"
+            className="absolute overflow-hidden rounded-[8px]"
             style={{
-              width: `${stageWidth}px`,
-              height: `${stageHeight}px`,
-              transform: `scale(${stageScale})`,
+              left: `${leftGutter}px`,
+              top: `${topGutter}px`,
+              width: `${scaledStageWidth}px`,
+              height: `${scaledStageHeight}px`,
             }}
           >
-            {overlayEnabled && inputUrl ? (
-              <img
-                className="pointer-events-none absolute inset-0 z-20 h-full w-full object-cover"
-                src={inputUrl}
-                alt=""
-                style={buildOverlayImageStyle(overlayCropRect)}
-              />
-            ) : null}
-
             <div
-              className="absolute inset-0 z-10 grid gap-px"
+              className="absolute left-0 top-0 origin-top-left"
               style={{
-                gridTemplateColumns: `repeat(${gridWidth}, minmax(${cellSize}px, ${cellSize}px))`,
-                gridTemplateRows: `repeat(${gridHeight}, minmax(${cellSize}px, ${cellSize}px))`,
-                backgroundColor: isDark ? "#3a3128" : "#c9c4bc",
+                width: `${stageWidth}px`,
+                height: `${stageHeight}px`,
+                transform: `scale(${stageScale})`,
               }}
             >
-              {cells.map((cell, index) => (
-                <button
-                  key={index}
-                  className="relative border-0 p-0"
-                  style={{
-                    width: `${cellSize}px`,
-                    height: `${cellSize}px`,
-                    backgroundColor: cell.hex ?? (isDark ? "rgba(29,20,16,0.55)" : "rgba(247,244,238,0.65)"),
-                  }}
-                  onMouseDown={() => {
-                    paintActiveRef.current = true;
-                    onApplyCell(index);
-                  }}
-                  onPointerDown={() => {
-                    paintActiveRef.current = true;
-                    onApplyCell(index);
-                  }}
-                  onMouseEnter={(event) => {
-                    if ((event.buttons & 1) === 1 && paintActiveRef.current) {
-                      onApplyCell(index);
-                    }
-                  }}
-                  onPointerEnter={(event) => {
-                    if ((event.buttons & 1) === 1 && paintActiveRef.current) {
-                      onApplyCell(index);
-                    }
-                  }}
-                  type="button"
-                >
-                  {cell.label && cellSize >= 18 ? (
-                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[8px] font-bold text-black/65 mix-blend-multiply sm:text-[9px]">
-                      {cell.label}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
+              {overlayEnabled && inputUrl ? (
+                <img
+                  className="pointer-events-none absolute inset-0 z-20 h-full w-full object-cover"
+                  src={inputUrl}
+                  alt=""
+                  style={buildOverlayImageStyle(overlayCropRect)}
+                />
+              ) : null}
+
+              {stageMode === "pindou" ? (
+                <PindouGuideLines
+                  gridWidth={gridWidth}
+                  gridHeight={gridHeight}
+                  cellSize={cellSize}
+                  gridGap={gridGap}
+                />
+              ) : null}
+
+              <div
+                className="absolute inset-0 z-10 grid gap-px"
+                style={{
+                  gridTemplateColumns: `repeat(${gridWidth}, minmax(${cellSize}px, ${cellSize}px))`,
+                  gridTemplateRows: `repeat(${gridHeight}, minmax(${cellSize}px, ${cellSize}px))`,
+                  backgroundColor: isDark ? "#3a3128" : "#c9c4bc",
+                }}
+              >
+                {cells.map((cell, index) => (
+                  <button
+                    key={index}
+                    className="relative border-0 p-0"
+                    style={{
+                      width: `${cellSize}px`,
+                      height: `${cellSize}px`,
+                      backgroundColor: getStageCellBackgroundColor(cell, stageMode, focusedLabel, isDark),
+                      boxShadow: getStageCellHighlight(cell, stageMode, focusedLabel, isDark),
+                    }}
+                    onMouseDown={() => {
+                      if (stageMode !== "edit") {
+                        return;
+                      }
+                      paintActiveRef.current = true;
+                      onApplyCell?.(index);
+                    }}
+                    onPointerDown={() => {
+                      if (stageMode === "pindou") {
+                        onFocusLabelChange?.(cell.label && cell.label === focusedLabel ? null : cell.label);
+                        return;
+                      }
+                      paintActiveRef.current = true;
+                      onApplyCell?.(index);
+                    }}
+                    onMouseEnter={(event) => {
+                      if (stageMode !== "edit") {
+                        return;
+                      }
+                      if ((event.buttons & 1) === 1 && paintActiveRef.current) {
+                        onApplyCell?.(index);
+                      }
+                    }}
+                    onPointerEnter={(event) => {
+                      if (stageMode !== "edit") {
+                        return;
+                      }
+                      if ((event.buttons & 1) === 1 && paintActiveRef.current) {
+                        onApplyCell?.(index);
+                      }
+                    }}
+                    type="button"
+                  >
+                    {cell.label && cellSize >= 18 ? (
+                      <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[8px] font-bold text-black/65 mix-blend-multiply sm:text-[9px]">
+                        {cell.label}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function AxisLabels({
+  axis,
+  gridCount,
+  offset,
+  gutter,
+  stageScale,
+  stageLength,
+  isDark,
+}: {
+  axis: "x" | "y";
+  gridCount: number;
+  offset: number;
+  gutter: number;
+  stageScale: number;
+  stageLength: number;
+  isDark: boolean;
+}) {
+  const textColor = isDark ? "rgba(255,255,255,0.82)" : "rgba(17,17,17,0.78)";
+  const fontSize = Math.max(9, Math.min(12, 10 * stageScale + 1));
+  const labels = buildAxisLabelPositions(gridCount);
+
+  return (
+    <>
+      {labels.map((label) => {
+        const position = ((label.index + 0.5) / gridCount) * stageLength;
+        return (
+          <div
+            key={`${axis}-${label.value}`}
+            className="pointer-events-none absolute flex items-center justify-center font-semibold"
+            style={
+              axis === "x"
+                ? {
+                    left: `${offset + position}px`,
+                    top: `${gutter * 0.12}px`,
+                    width: `${Math.max(12, 18 * stageScale)}px`,
+                    height: `${gutter * 0.76}px`,
+                    transform: "translateX(-50%)",
+                    color: textColor,
+                    fontSize: `${fontSize}px`,
+                  }
+                : {
+                    left: `${gutter * 0.08}px`,
+                    top: `${offset + position}px`,
+                    width: `${gutter * 0.76}px`,
+                    height: `${Math.max(12, 18 * stageScale)}px`,
+                    transform: "translateY(-50%)",
+                    color: textColor,
+                    fontSize: `${fontSize}px`,
+                  }
+            }
+          >
+            {label.value}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function PindouGuideLines({
+  gridWidth,
+  gridHeight,
+  cellSize,
+  gridGap,
+}: {
+  gridWidth: number;
+  gridHeight: number;
+  cellSize: number;
+  gridGap: number;
+}) {
+  const pitch = cellSize + gridGap;
+  const lines: Array<{
+    key: string;
+    orientation: "vertical" | "horizontal";
+    position: number;
+    dashed: boolean;
+  }> = [];
+
+  for (let index = 5; index < gridWidth; index += 5) {
+    lines.push({
+      key: `vx-${index}`,
+      orientation: "vertical",
+      position: index * pitch - gridGap / 2,
+      dashed: index % 10 !== 0,
+    });
+  }
+
+  for (let index = 5; index < gridHeight; index += 5) {
+    lines.push({
+      key: `hy-${index}`,
+      orientation: "horizontal",
+      position: index * pitch - gridGap / 2,
+      dashed: index % 10 !== 0,
+    });
+  }
+
+  return (
+    <>
+      {lines.map((line) => (
+        <div
+          key={line.key}
+          className="pointer-events-none absolute z-30 bg-black"
+          style={
+            line.orientation === "vertical"
+              ? {
+                  left: `${line.position}px`,
+                  top: 0,
+                  width: "1.5px",
+                  height: "100%",
+                  opacity: line.dashed ? 0.9 : 1,
+                  backgroundImage: line.dashed
+                    ? "repeating-linear-gradient(to bottom, #000 0 7px, transparent 7px 11px)"
+                    : "none",
+                  backgroundColor: line.dashed ? "transparent" : "#000",
+                }
+              : {
+                  top: `${line.position}px`,
+                  left: 0,
+                  height: "1.5px",
+                  width: "100%",
+                  opacity: line.dashed ? 0.9 : 1,
+                  backgroundImage: line.dashed
+                    ? "repeating-linear-gradient(to right, #000 0 7px, transparent 7px 11px)"
+                    : "none",
+                  backgroundColor: line.dashed ? "transparent" : "#000",
+                }
+          }
+        />
+      ))}
+    </>
+  );
+}
+
+function buildAxisLabelPositions(gridCount: number) {
+  const labels: Array<{ index: number; value: number }> = [];
+  for (let index = 0; index < gridCount; index += 1) {
+    const value = index + 1;
+    if (value === 1 || value % 5 === 0 || value === gridCount) {
+      labels.push({ index, value });
+    }
+  }
+  return labels;
+}
+
+function summarizeStageColors(
+  cells: EditableCell[],
+  paletteOptions: Array<{ label: string; hex: string }>,
+) {
+  const countMap = new Map<string, number>();
+  const paletteMap = new Map(paletteOptions.map((entry) => [entry.label, entry.hex]));
+
+  for (const cell of cells) {
+    if (!cell.label || !cell.hex) {
+      continue;
+    }
+    countMap.set(cell.label, (countMap.get(cell.label) ?? 0) + 1);
+  }
+
+  return Array.from(countMap.entries())
+    .map(([label, count]) => ({
+      label,
+      count,
+      hex: paletteMap.get(label) ?? "#000000",
+    }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+}
+
+function getStageCellBackgroundColor(
+  cell: EditableCell,
+  stageMode: EditorPanelMode,
+  focusedLabel: string | null | undefined,
+  isDark: boolean,
+) {
+  const emptyColor = isDark ? "rgba(29,20,16,0.55)" : "rgba(247,244,238,0.65)";
+  if (stageMode !== "pindou" || !focusedLabel) {
+    return cell.hex ?? emptyColor;
+  }
+
+  if (cell.label === focusedLabel && cell.hex) {
+    return cell.hex;
+  }
+
+  if (cell.hex) {
+    return blendHexWithWhite(cell.hex, 0.92);
+  }
+
+  return isDark ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.96)";
+}
+
+function getStageCellHighlight(
+  cell: EditableCell,
+  stageMode: EditorPanelMode,
+  focusedLabel: string | null | undefined,
+  isDark: boolean,
+) {
+  if (stageMode !== "pindou" || !focusedLabel || cell.label !== focusedLabel) {
+    return "none";
+  }
+
+  return isDark
+    ? "inset 0 0 0 2px rgba(255,255,255,0.9), 0 0 0 1px rgba(255,255,255,0.35)"
+    : "inset 0 0 0 2px rgba(17,17,17,0.84), 0 0 0 1px rgba(17,17,17,0.18)";
+}
+
+function blendHexWithWhite(hex: string, ratio: number) {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) {
+    return hex;
+  }
+
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  const mix = (value: number) => Math.round(value + (255 - value) * ratio);
+  return `rgb(${mix(red)}, ${mix(green)}, ${mix(blue)})`;
 }
 
 function InlineSliderField({

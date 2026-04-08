@@ -36,6 +36,9 @@ export function WorkspacePanels({
   canUndo,
   canRedo,
   paintActiveRef,
+  focusViewOpen,
+  onFocusViewOpenChange,
+  focusOnly = false,
 }: {
   t: Messages;
   inputUrl: string | null;
@@ -65,11 +68,53 @@ export function WorkspacePanels({
   canUndo: boolean;
   canRedo: boolean;
   paintActiveRef: MutableRefObject<boolean>;
+  focusViewOpen: boolean;
+  onFocusViewOpenChange: (value: boolean) => void;
+  focusOnly?: boolean;
 }) {
   const theme = getThemeClasses(isDark);
   const activeMatchedColorCount = matchedColorsBase.filter(
     (color) => !disabledResultLabels.includes(color.label),
   ).length;
+
+  if (focusOnly) {
+    return (
+      <section className="flex min-h-full min-w-0 flex-col">
+        {result ? (
+          <PixelEditorPanel
+            t={t}
+            isDark={isDark}
+            cells={currentCells}
+            gridWidth={result.gridWidth}
+            gridHeight={result.gridHeight}
+            inputUrl={inputUrl}
+            overlayCropRect={cropRect}
+            overlayEnabled={overlayEnabled}
+            onOverlayEnabledChange={onOverlayEnabledChange}
+            fillTolerance={fillTolerance}
+            onFillToleranceChange={onFillToleranceChange}
+            brushSize={brushSize}
+            onBrushSizeChange={onBrushSizeChange}
+            editTool={editTool}
+            onEditToolChange={onEditToolChange}
+            selectedLabel={selectedLabel}
+            selectedHex={paletteOptions.find((entry) => entry.label === selectedLabel)?.hex ?? null}
+            paletteOptions={paletteOptions}
+            onSelectedLabelChange={onSelectedLabelChange}
+            onApplyCell={onApplyCell}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            paintActiveRef={paintActiveRef}
+            focusViewOpen={focusViewOpen}
+            onFocusViewOpenChange={onFocusViewOpenChange}
+            focusOnly
+          />
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section className="flex min-w-0 flex-col gap-6">
@@ -100,6 +145,8 @@ export function WorkspacePanels({
           canUndo={canUndo}
           canRedo={canRedo}
           paintActiveRef={paintActiveRef}
+          focusViewOpen={focusViewOpen}
+          onFocusViewOpenChange={onFocusViewOpenChange}
         />
       ) : (
         <section className={clsx("rounded-[14px] border p-4 backdrop-blur transition-colors sm:rounded-[16px] sm:p-5 xl:rounded-[18px]", theme.panel)}>
