@@ -6,6 +6,7 @@ const fixtureDir = join(import.meta.dir, "fixtures");
 const sampleImagePath = join(fixtureDir, "bangboo_4.jpeg");
 const exportedChartImagePath = join(fixtureDir, "bangboo_2_10_chart.png");
 const additionalChartImagePath = join(fixtureDir, "chart_eye_blind_5.jpeg");
+const burgerChartImagePath = join(fixtureDir, "burger_chart.jpg");
 
 function loadRasterWithPowerShell(imagePath: string) {
   const escapedPath = imagePath.replace(/'/g, "''");
@@ -116,12 +117,30 @@ test("auto detect should crop exported chart to the framed pixel board", () => {
   expect(cropHeight).toBeGreaterThan(raster.height * 0.45);
 });
 
-test("auto detect should import chart_eye_blind_5 as a legend chart", () => {
+test("auto detect should import chart_eye_blind_5 as a chart", () => {
   const raster = loadRasterWithPowerShell(additionalChartImagePath);
   const result = debugAutoDetectRaster(raster, basename(additionalChartImagePath));
 
   expect(result.cropBox).not.toBeNull();
-  expect(result.mode).toContain("legend-axis-labels");
+  expect(result.mode).toContain("chart-");
   expect(result.gridWidth).toBeGreaterThan(30);
   expect(result.gridHeight).toBeGreaterThan(30);
+}, 120_000);
+
+test("auto detect should import burger chart as a separator-board chart", () => {
+  const raster = loadRasterWithPowerShell(burgerChartImagePath);
+  const result = debugAutoDetectRaster(raster, basename(burgerChartImagePath));
+
+  expect(result.cropBox).not.toBeNull();
+  expect(result.mode).toContain("separator-board");
+  expect(result.preferredEditorMode).toBe("pindou");
+  expect(result.gridWidth).toBeGreaterThanOrEqual(45);
+  expect(result.gridHeight).toBeGreaterThanOrEqual(40);
+
+  const [left, top, right, bottom] = result.cropBox!;
+  const cropWidth = right - left;
+  const cropHeight = bottom - top;
+
+  expect(cropWidth).toBeGreaterThan(raster.width * 0.85);
+  expect(cropHeight).toBeGreaterThan(raster.height * 0.8);
 }, 120_000);

@@ -185,6 +185,7 @@ interface ChartImportDetection {
   gridHeight: number;
   mode: string;
   cropBox: CropBox;
+  visualCropBox?: CropBox;
 }
 
 interface FrameBoxDetection {
@@ -345,7 +346,11 @@ export async function processImageFile(
       gridHeight = chartImport.gridHeight;
       detectionMode = chartImport.mode;
       preferredEditorMode = "pindou";
-      detectedCropRect = cropBoxToNormalizedCropRect(source.width, source.height, chartImport.cropBox);
+      detectedCropRect = cropBoxToNormalizedCropRect(
+        source.width,
+        source.height,
+        chartImport.visualCropBox ?? chartImport.cropBox,
+      );
     } else {
       const detection = detectPixelArtPrepared(source);
       if (!detection) {
@@ -954,12 +959,35 @@ function detectChartLikePixelArtPrepared(
   image: RasterImage,
   fileName?: string,
 ): Omit<ChartImportDetection, "logical"> | null {
-  if (!mayContainLegendChart(image, fileName)) {
+  const prepared = prepareDetectionRaster(image);
+  if (!mayContainLegendChart(prepared.raster, fileName)) {
     return null;
   }
-  const prepared = prepareDetectionRaster(image);
   const detection = detectChartLikePixelArt(prepared.raster, fileName);
   if (!detection) {
+    const separatorBoardBox = detectLightSeparatorBoardBox(prepared.raster);
+    if (separatorBoardBox && isPlausibleSeparatorBoardBox(prepared.raster, separatorBoardBox)) {
+      const sourceBoardCrop = mapPreparedCropBoxToSource(separatorBoardBox, image, prepared);
+      const sourceBoardRegion = cropRaster(image, sourceBoardCrop);
+      const focusedPrepared = prepareDetectionRaster(sourceBoardRegion);
+      const focusedDetection = detectBoardRegionImport(focusedPrepared.raster, "focused-board");
+      if (focusedDetection) {
+        return {
+          gridWidth: focusedDetection.gridWidth,
+          gridHeight: focusedDetection.gridHeight,
+          mode: focusedDetection.mode,
+          cropBox: offsetCropBox(
+            sourceBoardCrop,
+            mapPreparedCropBoxToSource(
+              focusedDetection.cropBox,
+              sourceBoardRegion,
+              focusedPrepared,
+            ),
+          ),
+          visualCropBox: sourceBoardCrop,
+        };
+      }
+    }
     return null;
   }
 
@@ -968,14 +996,17 @@ function detectChartLikePixelArtPrepared(
     gridHeight: detection.gridHeight,
     mode: detection.mode,
     cropBox: mapPreparedCropBoxToSource(detection.cropBox, image, prepared),
+    visualCropBox: detection.visualCropBox
+      ? mapPreparedCropBoxToSource(detection.visualCropBox, image, prepared)
+      : undefined,
   };
 }
 
 function shouldDefaultToPindouModePrepared(image: RasterImage, fileName: string) {
-  if (!mayContainLegendChart(image, fileName)) {
+  const prepared = prepareDetectionRaster(image);
+  if (!mayContainLegendChart(prepared.raster, fileName)) {
     return false;
   }
-  const prepared = prepareDetectionRaster(image);
   return shouldDefaultToPindouMode(prepared.raster, fileName);
 }
 
@@ -985,6 +1016,11 @@ function mayContainLegendChart(image: RasterImage, fileName?: string) {
   }
   if (image.width < 120 || image.height < 180) {
     return false;
+  }
+
+  const separatorBoardBox = detectLightSeparatorBoardBox(image);
+  if (separatorBoardBox && isPlausibleSeparatorBoardBox(image, separatorBoardBox)) {
+    return true;
   }
 
   const legendProbeTop = Math.max(0, Math.floor(image.height * 0.68));
@@ -1017,136 +1053,25 @@ function detectChartLikePixelArt(
     return null;
   }
 
-  const frameBox = detectDarkFrameBox(image);
-  if (frameBox) {
-    const legendRegion = cropRaster(
-      image,
-      [0, frameBox.outer[3], image.width, image.height],
-    );
-    if (!isPlausibleChartImportLayout(image, frameBox, legendRegion, fileName)) {
-      return detectLegendSeparatedChart(image);
-    }
-    if (!looksLikeChartLegend(legendRegion)) {
-      return detectLegendSeparatedChart(image);
-    }
-
-    const boardRegion = cropRaster(image, frameBox.inner);
-    const exportedGridHint =
-      fileName && looksLikeExportedChartFileName(fileName)
-        ? parseGridHintFromName(fileName)
-        : null;
-    if (
-      exportedGridHint &&
-      isReasonableGrid(exportedGridHint[0], exportedGridHint[1])
-    ) {
-      return {
-        logical: sampleRegularGrid(boardRegion, exportedGridHint[0], exportedGridHint[1]),
-        gridWidth: exportedGridHint[0],
-        gridHeight: exportedGridHint[1],
-        mode: "detected-chart-frame+exported-name-hint",
-        cropBox: frameBox.inner,
-      };
-    }
-
-    const boardDetection =
-      detectLightSeparatorPixelArt(boardRegion) ??
-      detectGridlinePixelArt(boardRegion) ??
-      detectGappedGridPixelArt(boardRegion) ??
-      detectBlockPixelArt(boardRegion);
-    if (!boardDetection) {
-      return detectLegendSeparatedChart(image);
-    }
-
-    const logical =
-      boardDetection.xSegments && boardDetection.ySegments
-        ? sampleSegments(boardRegion, boardDetection.xSegments, boardDetection.ySegments)
-        : sampleRegularGrid(
-            cropRaster(boardRegion, boardDetection.cropBox),
-            boardDetection.gridWidth,
-            boardDetection.gridHeight,
-          );
-
-    return {
-      logical,
-      gridWidth: boardDetection.gridWidth,
-      gridHeight: boardDetection.gridHeight,
-      mode: `${boardDetection.mode}+chart-frame`,
-      cropBox: offsetCropBox(frameBox.inner, boardDetection.cropBox),
-    };
+  const framedChart = detectFramedChartImport(image, fileName);
+  if (framedChart) {
+    return framedChart;
   }
 
-  const genericRectangularChart = detectGenericRectangularChartFrame(image);
-  if (genericRectangularChart) {
-    return genericRectangularChart;
-  }
-
-  const trimmedContentBox = detectLooseContentBox(image);
-  if (trimmedContentBox) {
-    const trimmedRegion = cropRaster(image, trimmedContentBox);
-    const trimmedDetection = detectLegendSeparatedChart(trimmedRegion);
-    if (trimmedDetection) {
-      return {
-        ...trimmedDetection,
-        cropBox: offsetCropBox(trimmedContentBox, trimmedDetection.cropBox),
-      };
-    }
-
-    const trimmedFramedDetection = detectBestLegendBoardCandidate(trimmedRegion);
-    if (trimmedFramedDetection) {
-      return {
-        ...trimmedFramedDetection,
-        cropBox: offsetCropBox(trimmedContentBox, trimmedFramedDetection.cropBox),
-      };
-    }
+  const separatorChart = detectSeparatorBoardChartImport(image);
+  if (separatorChart) {
+    return separatorChart;
   }
 
   return detectLegendSeparatedChart(image);
 }
 
-function detectGenericRectangularChartFrame(image: RasterImage): ChartImportDetection | null {
-  const frameCrop = detectClosedRectangularBoardFrame(image);
-  if (!frameCrop) {
-    return null;
-  }
-
-  const legendRegion =
-    frameCrop[3] < image.height - 24
-      ? cropRaster(image, [0, frameCrop[3], image.width, image.height])
-      : null;
-  if (!legendRegion || !looksLikeChartLegend(legendRegion)) {
-    return null;
-  }
-
-  const boardRegion = cropRaster(image, frameCrop);
-  const boardDetection =
-    detectLightSeparatorPixelArt(boardRegion) ??
-    detectGridlinePixelArt(boardRegion) ??
-    detectGappedGridPixelArt(boardRegion) ??
-    detectBlockPixelArt(boardRegion);
-  if (!boardDetection || !isPlausibleLegendBoardDetection(boardRegion, boardDetection)) {
-    return null;
-  }
-
-  const logical =
-    boardDetection.xSegments && boardDetection.ySegments
-      ? sampleSegments(boardRegion, boardDetection.xSegments, boardDetection.ySegments)
-      : sampleRegularGrid(
-          cropRaster(boardRegion, boardDetection.cropBox),
-          boardDetection.gridWidth,
-          boardDetection.gridHeight,
-        );
-
-  return {
-    logical,
-    gridWidth: boardDetection.gridWidth,
-    gridHeight: boardDetection.gridHeight,
-    mode: `${boardDetection.mode}+generic-rect-frame`,
-    cropBox: offsetCropBox(frameCrop, boardDetection.cropBox),
-  };
-}
-
 function shouldDefaultToPindouMode(image: RasterImage, fileName: string) {
   if (looksLikeExportedChartFileName(fileName)) {
+    return true;
+  }
+
+  if (detectSeparatorBoardChartImport(image)) {
     return true;
   }
 
@@ -1220,36 +1145,914 @@ function detectLegendSeparatedChart(image: RasterImage): ChartImportDetection | 
   }
 
   const boardRegion = cropRaster(image, [0, 0, image.width, legendTop]);
-  const candidate = detectBestLegendBoardCandidate(boardRegion);
-  if (!candidate) {
+  const frameCrop = detectClosedRectangularBoardFrame(boardRegion);
+  if (!frameCrop || !isPlausibleChartFramePosition(boardRegion, frameCrop)) {
     return null;
   }
-
-  const candidateRegion = cropRaster(boardRegion, candidate.cropBox);
-  const candidateFrame = detectClosedRectangularBoardFrame(candidateRegion);
-  if (!candidateFrame) {
-    return null;
-  }
-  const candidateWidth = candidate.cropBox[2] - candidate.cropBox[0];
-  const candidateHeight = candidate.cropBox[3] - candidate.cropBox[1];
-  const maxHorizontalInset = Math.max(10, Math.round(candidateWidth * 0.08));
-  const maxVerticalInset = Math.max(10, Math.round(candidateHeight * 0.08));
-  if (
-    candidateFrame[0] > maxHorizontalInset ||
-    candidateWidth - candidateFrame[2] > maxHorizontalInset ||
-    candidateFrame[1] > maxVerticalInset ||
-    candidateHeight - candidateFrame[3] > maxVerticalInset
-  ) {
+  const framedBoard = cropRaster(boardRegion, frameCrop);
+  const boardDetection = detectChartBoardBySquareCells(framedBoard);
+  if (!boardDetection) {
     return null;
   }
 
   return {
-    logical: candidate.logical,
-    gridWidth: candidate.gridWidth,
-    gridHeight: candidate.gridHeight,
-    mode: `${candidate.mode}+chart-legend`,
-    cropBox: offsetCropBox([0, 0, image.width, legendTop], candidate.cropBox),
+    logical: boardDetection.logical,
+    gridWidth: boardDetection.gridWidth,
+    gridHeight: boardDetection.gridHeight,
+    mode: `${boardDetection.mode}+chart-legend`,
+    cropBox: offsetCropBox(
+      [0, 0, image.width, legendTop],
+      offsetCropBox(frameCrop, boardDetection.cropBox),
+    ),
   };
+}
+
+function detectFramedChartImport(
+  image: RasterImage,
+  fileName?: string,
+): ChartImportDetection | null {
+  const frameCrop = detectClosedRectangularBoardFrame(image);
+  if (!frameCrop || !isPlausibleChartFramePosition(image, frameCrop)) {
+    return null;
+  }
+
+  const legendRegion =
+    frameCrop[3] < image.height - 24
+      ? cropRaster(image, [0, frameCrop[3], image.width, image.height])
+      : null;
+  if (!legendRegion || !looksLikeChartLegend(legendRegion)) {
+    return null;
+  }
+  if (!isPlausibleChartImportLayoutFromCrop(image, frameCrop, legendRegion, fileName)) {
+    return null;
+  }
+
+  const framedBoard = cropRaster(image, frameCrop);
+  const boardDetection = detectChartBoardBySquareCells(framedBoard);
+  if (!boardDetection) {
+    return null;
+  }
+
+  return {
+    logical: boardDetection.logical,
+    gridWidth: boardDetection.gridWidth,
+    gridHeight: boardDetection.gridHeight,
+    mode: `${boardDetection.mode}+chart-frame`,
+    cropBox: offsetCropBox(frameCrop, boardDetection.cropBox),
+  };
+}
+
+function detectSeparatorBoardChartImport(image: RasterImage): ChartImportDetection | null {
+  const separatorBoardBox = detectLightSeparatorBoardBox(image);
+  if (!separatorBoardBox || !isPlausibleSeparatorBoardBox(image, separatorBoardBox)) {
+    return null;
+  }
+
+  const separatorRegion = cropRaster(image, separatorBoardBox);
+  const boardDetection = detectBoardRegionImport(separatorRegion, "separator-board");
+  if (!boardDetection) {
+    return null;
+  }
+
+  return {
+    logical: boardDetection.logical,
+    gridWidth: boardDetection.gridWidth,
+    gridHeight: boardDetection.gridHeight,
+    mode: boardDetection.mode,
+    cropBox: offsetCropBox(separatorBoardBox, boardDetection.cropBox),
+    visualCropBox: separatorBoardBox,
+  };
+}
+
+function buildChartImportFromPixelDetection(
+  image: RasterImage,
+  detection: DetectionResult | null,
+  suffix: string,
+): ChartImportDetection | null {
+  if (!detection) {
+    return null;
+  }
+
+  const logical =
+    detection.xSegments && detection.ySegments
+      ? sampleSegments(image, detection.xSegments, detection.ySegments)
+      : sampleRegularGrid(
+          cropRaster(image, detection.cropBox),
+          detection.gridWidth,
+          detection.gridHeight,
+        );
+
+  return {
+    logical,
+    gridWidth: detection.gridWidth,
+    gridHeight: detection.gridHeight,
+    mode: `${detection.mode}+${suffix}`,
+    cropBox: detection.cropBox,
+  };
+}
+
+function detectBoardRegionImport(
+  boardRegion: RasterImage,
+  suffix: string,
+): ChartImportDetection | null {
+  const nestedFrameCrop = detectClosedRectangularBoardFrame(boardRegion);
+  const regionCandidates: Array<{ region: RasterImage; baseCrop: CropBox }> = [];
+  const axisInsetX = Math.max(10, Math.round(boardRegion.width * 0.035));
+  const axisInsetY = Math.max(10, Math.round(boardRegion.height * 0.035));
+  const axisLabelInnerCrop = detectAxisLabelBoardInnerCrop(boardRegion);
+  const legendBoardCoreCrop = detectLegendBoardCoreCrop(boardRegion);
+  if (nestedFrameCrop) {
+    regionCandidates.push({
+      region: cropRaster(boardRegion, nestedFrameCrop),
+      baseCrop: nestedFrameCrop,
+    });
+  }
+  if (axisLabelInnerCrop) {
+    regionCandidates.push({
+      region: cropRaster(boardRegion, axisLabelInnerCrop),
+      baseCrop: axisLabelInnerCrop,
+    });
+  }
+  if (legendBoardCoreCrop) {
+    regionCandidates.push({
+      region: cropRaster(boardRegion, legendBoardCoreCrop),
+      baseCrop: legendBoardCoreCrop,
+    });
+  }
+  if (
+    boardRegion.width - axisInsetX * 2 >= boardRegion.width * 0.72 &&
+    boardRegion.height - axisInsetY * 2 >= boardRegion.height * 0.72
+  ) {
+    const insetCrop: CropBox = [
+      axisInsetX,
+      axisInsetY,
+      boardRegion.width - axisInsetX,
+      boardRegion.height - axisInsetY,
+    ];
+    regionCandidates.push({
+      region: cropRaster(boardRegion, insetCrop),
+      baseCrop: insetCrop,
+    });
+  }
+  regionCandidates.push({
+    region: boardRegion,
+    baseCrop: [0, 0, boardRegion.width, boardRegion.height],
+  });
+
+  let best: ChartImportDetection | null = null;
+  let bestScore = -1;
+  const seenCandidateKeys = new Set<string>();
+  for (const candidate of regionCandidates) {
+    const key = candidate.baseCrop.join(",");
+    if (seenCandidateKeys.has(key)) {
+      continue;
+    }
+    seenCandidateKeys.add(key);
+
+    const detections = [
+      buildChartImportFromPixelDetection(
+        candidate.region,
+        detectLegendBoardFromAxisLabels(candidate.region),
+        suffix,
+      ),
+      detectGuideLineBoardImport(candidate.region, suffix),
+      detectChartBoardBySquareCells(candidate.region),
+      buildChartImportFromPixelDetection(
+        candidate.region,
+        detectPeriodicLegendBoard(candidate.region),
+        suffix,
+      ),
+      buildChartImportFromPixelDetection(
+        candidate.region,
+        detectLightSeparatorPixelArt(candidate.region),
+        suffix,
+      ),
+    ].filter((value): value is ChartImportDetection => Boolean(value));
+
+    for (const detection of detections) {
+      const score =
+        scoreBoardRegionImportCandidate(candidate.region, detection) +
+        scoreBoardRegionCropPlacement(candidate.region, detection.cropBox);
+      if (score <= bestScore) {
+        continue;
+      }
+
+      best = {
+        logical: detection.logical,
+        gridWidth: detection.gridWidth,
+        gridHeight: detection.gridHeight,
+        mode: detection.mode.includes(`+${suffix}`)
+          ? detection.mode
+          : `${detection.mode}+${suffix}`,
+        cropBox: offsetCropBox(candidate.baseCrop, detection.cropBox),
+      };
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function scoreBoardRegionImportCandidate(
+  boardRegion: RasterImage,
+  detection: Pick<ChartImportDetection, "gridWidth" | "gridHeight" | "cropBox" | "mode">,
+) {
+  const detectionLike: DetectionResult = {
+    gridWidth: detection.gridWidth,
+    gridHeight: detection.gridHeight,
+    cropBox: detection.cropBox,
+    mode: detection.mode,
+  };
+  let score = scoreLegendBoardCandidate(boardRegion, detectionLike);
+
+  if (detection.mode.includes("guide-lines")) {
+    score += 2.8;
+  }
+  if (detection.mode.includes("square-cells")) {
+    score += 1.6;
+  }
+  if (detection.mode.includes("axis-label")) {
+    score -= 1.2;
+  }
+  if (detection.mode.includes("detected-blocks")) {
+    score -= 1.6;
+  }
+
+  return score;
+}
+
+function scoreBoardRegionCropPlacement(boardRegion: RasterImage, cropBox: CropBox) {
+  const touches =
+    Number(cropBox[0] <= 1) +
+    Number(cropBox[1] <= 1) +
+    Number(cropBox[2] >= boardRegion.width - 1) +
+    Number(cropBox[3] >= boardRegion.height - 1);
+  return -touches * 1.35;
+}
+
+function detectGuideLineBoardImport(
+  image: RasterImage,
+  suffix: string,
+): ChartImportDetection | null {
+  const xGuide = detectGuideLineAxis(image, "x");
+  const yGuide = detectGuideLineAxis(image, "y");
+  if (!xGuide || !yGuide) {
+    return null;
+  }
+
+  const cropBox: CropBox = [
+    Math.max(0, Math.round(xGuide.start + 1)),
+    Math.max(0, Math.round(yGuide.start + 1)),
+    Math.min(image.width, Math.round(xGuide.end)),
+    Math.min(image.height, Math.round(yGuide.end)),
+  ];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  if (cropWidth <= 0 || cropHeight <= 0) {
+    return null;
+  }
+
+  const detection: DetectionResult = {
+    gridWidth: xGuide.gridCount,
+    gridHeight: yGuide.gridCount,
+    cropBox,
+    mode: `detected-guide-lines+${suffix}`,
+  };
+  if (!isPlausibleLegendBoardDetection(image, detection)) {
+    return null;
+  }
+
+  return {
+    logical: sampleRegularGrid(cropRaster(image, cropBox), xGuide.gridCount, yGuide.gridCount),
+    gridWidth: xGuide.gridCount,
+    gridHeight: yGuide.gridCount,
+    mode: detection.mode,
+    cropBox,
+  };
+}
+
+function detectGuideLineAxis(image: RasterImage, axis: "x" | "y") {
+  const signal = buildRestrictedDarkCoverageSignal(image, axis, 0.06, 0.94);
+  const mean = arrayMean(signal);
+  const stddev = arrayStandardDeviation(signal, mean);
+  const maxValue = Math.max(...signal);
+  const threshold = Math.max(mean + stddev * 1.6, maxValue * 0.42, 0.02);
+  const peaks = dedupePeakPositions(localMaxima(signal, threshold), 6);
+  if (peaks.length < 4) {
+    return null;
+  }
+
+  const diffs: number[] = [];
+  for (let index = 0; index < peaks.length - 1; index += 1) {
+    const diff = peaks[index + 1] - peaks[index];
+    if (diff >= 24) {
+      diffs.push(diff);
+    }
+  }
+  if (diffs.length < 3) {
+    return null;
+  }
+
+  const guideSpan = medianOfNumbers(diffs);
+  let best: { start: number; end: number; gridCount: number; error: number } | null = null;
+  for (const guideStep of [10, 5]) {
+    const cellPitch = guideSpan / guideStep;
+    if (!Number.isFinite(cellPitch) || cellPitch < 4) {
+      continue;
+    }
+
+    const start = peaks[0];
+    const end = peaks[peaks.length - 1];
+    const gridCount = Math.round((end - start) / cellPitch);
+    if (!isReasonableGrid(axis === "x" ? gridCount : 16, axis === "y" ? gridCount : 16)) {
+      continue;
+    }
+
+    const error = Math.abs((end - start) / Math.max(1, gridCount) - cellPitch);
+    if (!best || error < best.error) {
+      best = { start, end, gridCount, error };
+    }
+  }
+
+  return best;
+}
+
+function dedupePeakPositions(peaks: number[], tolerance: number) {
+  if (peaks.length === 0) {
+    return [];
+  }
+
+  const sorted = [...peaks].sort((left, right) => left - right);
+  const deduped: number[] = [sorted[0]];
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (sorted[index] - deduped[deduped.length - 1] > tolerance) {
+      deduped.push(sorted[index]);
+    }
+  }
+  return deduped;
+}
+
+function medianOfNumbers(values: number[]) {
+  if (!values.length) {
+    return 0;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
+function isPlausibleSeparatorBoardBox(image: RasterImage, box: CropBox) {
+  const width = box[2] - box[0];
+  const height = box[3] - box[1];
+  const areaRatio = (width * height) / Math.max(1, image.width * image.height);
+  const leftInset = box[0];
+  const topInset = box[1];
+  const rightInset = image.width - box[2];
+  const bottomInset = image.height - box[3];
+  const verticalMarginCount =
+    Number(topInset >= Math.max(20, image.height * 0.035)) +
+    Number(bottomInset >= Math.max(20, image.height * 0.035));
+  const horizontalMarginCount =
+    Number(leftInset >= Math.max(16, image.width * 0.025)) +
+    Number(rightInset >= Math.max(16, image.width * 0.025));
+  const hasOuterMargin =
+    verticalMarginCount >= 1 ||
+    horizontalMarginCount >= 1;
+
+  return (
+    width >= image.width * 0.72 &&
+    height >= image.height * 0.5 &&
+    areaRatio >= 0.34 &&
+    areaRatio <= 0.985 &&
+    hasOuterMargin
+  );
+}
+
+function isPlausibleChartImportLayoutFromCrop(
+  image: RasterImage,
+  frameCrop: CropBox,
+  legendRegion: RasterImage,
+  fileName?: string,
+) {
+  if (looksLikeExportedChartFileName(fileName ?? "")) {
+    return true;
+  }
+
+  const width = frameCrop[2] - frameCrop[0];
+  const height = frameCrop[3] - frameCrop[1];
+  const legendHeight = image.height - frameCrop[3];
+
+  if (width <= 0 || height <= 0 || legendHeight <= 0) {
+    return false;
+  }
+
+  const widthRatio = width / image.width;
+  const heightRatio = height / image.height;
+  const frameAreaRatio = (width * height) / Math.max(1, image.width * image.height);
+  const legendRatio = legendHeight / image.height;
+  const horizontalInset = Math.max(frameCrop[0], image.width - frameCrop[2]);
+  const topInset = frameCrop[1];
+
+  return (
+    widthRatio >= 0.58 &&
+    heightRatio >= 0.34 &&
+    frameAreaRatio >= 0.24 &&
+    legendRatio >= 0.08 &&
+    legendRatio <= 0.46 &&
+    legendRegion.height >= 72 &&
+    horizontalInset <= Math.max(40, width * 0.18) &&
+    topInset <= Math.max(56, image.height * 0.18)
+  );
+}
+
+function isPlausibleChartFramePosition(image: RasterImage, frameCrop: CropBox) {
+  const width = frameCrop[2] - frameCrop[0];
+  const height = frameCrop[3] - frameCrop[1];
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+
+  const leftInset = frameCrop[0];
+  const rightInset = image.width - frameCrop[2];
+  const topInset = frameCrop[1];
+  const bottomInset = image.height - frameCrop[3];
+
+  return (
+    leftInset <= Math.max(36, width * 0.18) &&
+    rightInset <= Math.max(36, width * 0.18) &&
+    topInset <= Math.max(42, height * 0.12) &&
+    bottomInset <= Math.max(image.height * 0.52, height * 0.8)
+  );
+}
+
+interface RasterIntegralStats {
+  width: number;
+  height: number;
+  stride: number;
+  red: Float64Array;
+  green: Float64Array;
+  blue: Float64Array;
+  luminance: Float64Array;
+  luminanceSquared: Float64Array;
+}
+
+interface CellBandStats {
+  mean: [number, number, number];
+  variance: number;
+}
+
+function detectChartBoardBySquareCells(board: RasterImage): ChartImportDetection | null {
+  const minDimension = Math.min(board.width, board.height);
+  const minimumCellSize = Math.max(4, Math.ceil(minDimension / 102));
+  const maximumCellSize = Math.min(96, Math.floor(minDimension / 10));
+  if (maximumCellSize < minimumCellSize) {
+    return null;
+  }
+
+  const stats = buildRasterIntegralStats(board);
+  let best: (ChartImportDetection & { score: number }) | null = null;
+  for (let cellSize = maximumCellSize; cellSize >= minimumCellSize; cellSize -= 1) {
+    if (
+      Math.floor(board.width / cellSize) > 102 ||
+      Math.floor(board.height / cellSize) > 102
+    ) {
+      break;
+    }
+
+    const bestForCell = findBestSquareCellBoardCandidate(board, stats, cellSize);
+    if (bestForCell && (!best || bestForCell.score > best.score)) {
+      best = bestForCell;
+    }
+  }
+
+  return best;
+}
+
+function findBestSquareCellBoardCandidate(
+  board: RasterImage,
+  stats: RasterIntegralStats,
+  cellSize: number,
+): (ChartImportDetection & { score: number }) | null {
+  const maxGap = Math.min(8, Math.max(0, Math.floor(cellSize * 0.35)));
+  let best: (ChartImportDetection & { score: number }) | null = null;
+
+  for (let gap = 0; gap <= maxGap; gap += 1) {
+    const pitch = cellSize + gap;
+    const offsetLimit = Math.min(pitch - 1, Math.max(gap + 2, Math.round(cellSize * 0.5)));
+
+    for (let offsetY = 0; offsetY <= offsetLimit; offsetY += 1) {
+      const rowCount = countCellsAlongAxis(board.height, offsetY, cellSize, pitch);
+      if (rowCount < 10 || rowCount > 102) {
+        continue;
+      }
+
+      for (let offsetX = 0; offsetX <= offsetLimit; offsetX += 1) {
+        const columnCount = countCellsAlongAxis(board.width, offsetX, cellSize, pitch);
+        if (columnCount < 10 || columnCount > 102) {
+          continue;
+        }
+
+        const candidate = evaluateSquareCellBoardCandidate(
+          board,
+          stats,
+          cellSize,
+          gap,
+          offsetX,
+          offsetY,
+          columnCount,
+          rowCount,
+        );
+        if (!candidate) {
+          continue;
+        }
+        if (!best || candidate.score > best.score) {
+          best = candidate;
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
+function countCellsAlongAxis(
+  axisLength: number,
+  offset: number,
+  cellSize: number,
+  pitch: number,
+) {
+  let count = 0;
+  while (offset + count * pitch + cellSize <= axisLength) {
+    count += 1;
+  }
+  return count;
+}
+
+function evaluateSquareCellBoardCandidate(
+  board: RasterImage,
+  stats: RasterIntegralStats,
+  cellSize: number,
+  gap: number,
+  offsetX: number,
+  offsetY: number,
+  columnCount: number,
+  rowCount: number,
+): (ChartImportDetection & { score: number }) | null {
+  const sampleRows = [0, Math.floor(rowCount / 2), rowCount - 1];
+  const sampleColumns = [0, Math.floor(columnCount / 2), columnCount - 1];
+  let coarseHits = 0;
+  for (const row of sampleRows) {
+    for (const column of sampleColumns) {
+      if (
+        isLikelyPixelSquareCell(
+          board,
+          stats,
+          offsetX + column * (cellSize + gap),
+          offsetY + row * (cellSize + gap),
+          cellSize,
+        )
+      ) {
+        coarseHits += 1;
+      }
+    }
+  }
+  if (coarseHits < 4) {
+    return null;
+  }
+
+  const rowHits = new Int16Array(rowCount);
+  const columnHits = new Int16Array(columnCount);
+  const gridHits = new Uint8Array(rowCount * columnCount);
+  let totalHits = 0;
+
+  for (let row = 0; row < rowCount; row += 1) {
+    const y = offsetY + row * (cellSize + gap);
+    for (let column = 0; column < columnCount; column += 1) {
+      const x = offsetX + column * (cellSize + gap);
+      if (!isLikelyPixelSquareCell(board, stats, x, y, cellSize)) {
+        continue;
+      }
+
+      const index = row * columnCount + column;
+      gridHits[index] = 1;
+      rowHits[row] += 1;
+      columnHits[column] += 1;
+      totalHits += 1;
+    }
+  }
+
+  if (totalHits < 9) {
+    return null;
+  }
+
+  const rowThreshold = Math.max(3, Math.ceil(columnCount * 0.33));
+  const columnThreshold = Math.max(3, Math.ceil(rowCount * 0.33));
+  const firstRow = firstDenseIndex(rowHits, rowThreshold);
+  const lastRow = lastDenseIndex(rowHits, rowThreshold);
+  const firstColumn = firstDenseIndex(columnHits, columnThreshold);
+  const lastColumn = lastDenseIndex(columnHits, columnThreshold);
+  if (
+    firstRow === null ||
+    lastRow === null ||
+    firstColumn === null ||
+    lastColumn === null
+  ) {
+    return null;
+  }
+
+  const trimmedRowCount = lastRow - firstRow + 1;
+  const trimmedColumnCount = lastColumn - firstColumn + 1;
+  if (
+    trimmedRowCount < 10 ||
+    trimmedColumnCount < 10 ||
+    trimmedRowCount > 102 ||
+    trimmedColumnCount > 102
+  ) {
+    return null;
+  }
+
+  let trimmedHits = 0;
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      trimmedHits += gridHits[row * columnCount + column] ?? 0;
+    }
+  }
+
+  const trimmedTotal = trimmedRowCount * trimmedColumnCount;
+  const occupancy = trimmedHits / Math.max(1, trimmedTotal);
+  if (occupancy < 0.42) {
+    return null;
+  }
+
+  const cropBox: CropBox = [
+    offsetX + firstColumn * (cellSize + gap),
+    offsetY + firstRow * (cellSize + gap),
+    Math.min(
+      board.width,
+      offsetX + (lastColumn + 1) * (cellSize + gap) - gap,
+    ),
+    Math.min(
+      board.height,
+      offsetY + (lastRow + 1) * (cellSize + gap) - gap,
+    ),
+  ];
+  const cropWidth = cropBox[2] - cropBox[0];
+  const cropHeight = cropBox[3] - cropBox[1];
+  if (cropWidth <= 0 || cropHeight <= 0) {
+    return null;
+  }
+
+  const detection: DetectionResult = {
+    gridWidth: trimmedColumnCount,
+    gridHeight: trimmedRowCount,
+    cropBox,
+    mode: "detected-square-cells",
+  };
+  if (!isPlausibleLegendBoardDetection(board, detection)) {
+    return null;
+  }
+
+  const logical = sampleFixedSquareGrid(
+    cropRaster(board, cropBox),
+    trimmedColumnCount,
+    trimmedRowCount,
+    cellSize,
+    gap,
+  );
+  const areaRatio = (cropWidth * cropHeight) / Math.max(1, board.width * board.height);
+  const gridArea = trimmedColumnCount * trimmedRowCount;
+
+  return {
+    logical,
+    gridWidth: trimmedColumnCount,
+    gridHeight: trimmedRowCount,
+    mode: detection.mode,
+    cropBox,
+    score:
+      occupancy * 120 +
+      areaRatio * 90 +
+      Math.min(gridArea, 2400) * 0.12 +
+      cellSize * 0.8,
+  };
+}
+
+function firstDenseIndex(values: Int16Array, threshold: number) {
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] >= threshold) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function lastDenseIndex(values: Int16Array, threshold: number) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (values[index] >= threshold) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function isLikelyPixelSquareCell(
+  image: RasterImage,
+  stats: RasterIntegralStats,
+  left: number,
+  top: number,
+  size: number,
+) {
+  if (
+    left < 0 ||
+    top < 0 ||
+    left + size > stats.width ||
+    top + size > stats.height
+  ) {
+    return false;
+  }
+
+  const inset = Math.max(1, Math.round(size * 0.14));
+  const band = Math.max(1, Math.round(size * 0.12));
+  const innerLeft = left + inset;
+  const innerTop = top + inset;
+  const innerRight = left + size - inset;
+  const innerBottom = top + size - inset;
+  if (
+    innerRight - innerLeft < band * 2 ||
+    innerBottom - innerTop < band * 2
+  ) {
+    return false;
+  }
+
+  const bands = [
+    readCellBandStats(stats, innerLeft, innerTop, innerRight, innerTop + band),
+    readCellBandStats(stats, innerLeft, innerBottom - band, innerRight, innerBottom),
+    readCellBandStats(stats, innerLeft, innerTop, innerLeft + band, innerBottom),
+    readCellBandStats(stats, innerRight - band, innerTop, innerRight, innerBottom),
+  ];
+
+  let maxVariance = 0;
+  let maxDistance = 0;
+  for (let index = 0; index < bands.length; index += 1) {
+    maxVariance = Math.max(maxVariance, bands[index].variance);
+    for (let next = index + 1; next < bands.length; next += 1) {
+      maxDistance = Math.max(maxDistance, rgbDistance(bands[index].mean, bands[next].mean));
+    }
+  }
+
+  if (maxVariance > 1400 || maxDistance > 40) {
+    return false;
+  }
+
+  return hasDominantBorderColor(image, left, top, size);
+}
+
+function hasDominantBorderColor(
+  image: RasterImage,
+  left: number,
+  top: number,
+  size: number,
+) {
+  const inset = Math.max(1, Math.round(size * 0.18));
+  const sampleCountPerEdge = Math.max(3, Math.min(7, Math.round(size / 4)));
+  const buckets = new Map<number, number>();
+  let totalSamples = 0;
+
+  const sampleEdge = (
+    startX: number,
+    startY: number,
+    deltaX: number,
+    deltaY: number,
+  ) => {
+    for (let index = 0; index < sampleCountPerEdge; index += 1) {
+      const factor =
+        sampleCountPerEdge === 1 ? 0 : index / Math.max(1, sampleCountPerEdge - 1);
+      const x = Math.max(
+        0,
+        Math.min(
+          image.width - 1,
+          Math.round(startX + deltaX * factor),
+        ),
+      );
+      const y = Math.max(
+        0,
+        Math.min(
+          image.height - 1,
+          Math.round(startY + deltaY * factor),
+        ),
+      );
+      const pixel = getPixel(image, x, y);
+      const bucket =
+        ((pixel[0] >> 4) << 8) |
+        ((pixel[1] >> 4) << 4) |
+        (pixel[2] >> 4);
+      buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
+      totalSamples += 1;
+    }
+  };
+
+  sampleEdge(left + inset, top + inset, size - inset * 2 - 1, 0);
+  sampleEdge(left + inset, top + size - inset - 1, size - inset * 2 - 1, 0);
+  sampleEdge(left + inset, top + inset, 0, size - inset * 2 - 1);
+  sampleEdge(left + size - inset - 1, top + inset, 0, size - inset * 2 - 1);
+
+  let dominant = 0;
+  for (const count of buckets.values()) {
+    dominant = Math.max(dominant, count);
+  }
+
+  return dominant / Math.max(1, totalSamples) >= 0.5;
+}
+
+function buildRasterIntegralStats(image: RasterImage): RasterIntegralStats {
+  const stride = image.width + 1;
+  const length = stride * (image.height + 1);
+  const red = new Float64Array(length);
+  const green = new Float64Array(length);
+  const blue = new Float64Array(length);
+  const luminance = new Float64Array(length);
+  const luminanceSquared = new Float64Array(length);
+
+  for (let y = 0; y < image.height; y += 1) {
+    let rowRed = 0;
+    let rowGreen = 0;
+    let rowBlue = 0;
+    let rowLuminance = 0;
+    let rowLuminanceSquared = 0;
+    for (let x = 0; x < image.width; x += 1) {
+      const pixelIndex = (y * image.width + x) * 4;
+      const pixelRed = image.data[pixelIndex] ?? 0;
+      const pixelGreen = image.data[pixelIndex + 1] ?? 0;
+      const pixelBlue = image.data[pixelIndex + 2] ?? 0;
+      const pixelLuminance = pixelRed * 0.2126 + pixelGreen * 0.7152 + pixelBlue * 0.0722;
+      const integralIndex = (y + 1) * stride + (x + 1);
+
+      rowRed += pixelRed;
+      rowGreen += pixelGreen;
+      rowBlue += pixelBlue;
+      rowLuminance += pixelLuminance;
+      rowLuminanceSquared += pixelLuminance * pixelLuminance;
+
+      red[integralIndex] = red[integralIndex - stride] + rowRed;
+      green[integralIndex] = green[integralIndex - stride] + rowGreen;
+      blue[integralIndex] = blue[integralIndex - stride] + rowBlue;
+      luminance[integralIndex] = luminance[integralIndex - stride] + rowLuminance;
+      luminanceSquared[integralIndex] =
+        luminanceSquared[integralIndex - stride] + rowLuminanceSquared;
+    }
+  }
+
+  return {
+    width: image.width,
+    height: image.height,
+    stride,
+    red,
+    green,
+    blue,
+    luminance,
+    luminanceSquared,
+  };
+}
+
+function readCellBandStats(
+  stats: RasterIntegralStats,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+): CellBandStats {
+  const area = Math.max(1, (right - left) * (bottom - top));
+  const redSum = sumIntegralRect(stats.red, stats.stride, left, top, right, bottom);
+  const greenSum = sumIntegralRect(stats.green, stats.stride, left, top, right, bottom);
+  const blueSum = sumIntegralRect(stats.blue, stats.stride, left, top, right, bottom);
+  const luminanceSum = sumIntegralRect(stats.luminance, stats.stride, left, top, right, bottom);
+  const luminanceSquaredSum = sumIntegralRect(
+    stats.luminanceSquared,
+    stats.stride,
+    left,
+    top,
+    right,
+    bottom,
+  );
+  const meanLuminance = luminanceSum / area;
+
+  return {
+    mean: [redSum / area, greenSum / area, blueSum / area],
+    variance: Math.max(0, luminanceSquaredSum / area - meanLuminance * meanLuminance),
+  };
+}
+
+function sumIntegralRect(
+  values: Float64Array,
+  stride: number,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+) {
+  const topLeft = top * stride + left;
+  const topRight = top * stride + right;
+  const bottomLeft = bottom * stride + left;
+  const bottomRight = bottom * stride + right;
+  return values[bottomRight] - values[bottomLeft] - values[topRight] + values[topLeft];
 }
 
 function detectLooseContentBox(image: RasterImage): CropBox | null {
@@ -1307,33 +2110,7 @@ function detectLooseContentBox(image: RasterImage): CropBox | null {
 }
 
 function detectBestLegendBoardCandidate(boardRegion: RasterImage) {
-  const axisLabelBoard = detectLegendBoardFromAxisLabelsCandidate(boardRegion);
-  if (axisLabelBoard && isConfidentAxisLabelLegendBoard(boardRegion, axisLabelBoard)) {
-    return axisLabelBoard;
-  }
-  const looseContentBox = detectLooseContentBox(boardRegion);
-  const coreBoardBox = detectLegendBoardCoreCrop(boardRegion);
-  const innerBoardBox = detectLegendBoardInnerCrop(boardRegion);
-  const denseContentBandBox = detectDenseLooseContentBandBox(boardRegion);
-  const connectedBoardBox = detectLargestLooseContentComponentBox(boardRegion);
-  const separatorBoardBox = detectLightSeparatorBoardBox(boardRegion);
-
-  const candidates = [
-    axisLabelBoard,
-    looseContentBox ? detectLegendBoardFromCandidateBox(boardRegion, looseContentBox) : null,
-    coreBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, coreBoardBox) : null,
-    innerBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, innerBoardBox) : null,
-    separatorBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, separatorBoardBox) : null,
-    connectedBoardBox ? detectLegendBoardFromCandidateBox(boardRegion, connectedBoardBox) : null,
-    denseContentBandBox ? detectLegendBoardFromCandidateBox(boardRegion, denseContentBandBox) : null,
-  ].filter((candidate): candidate is ChartImportDetection & { score: number } => Boolean(candidate));
-  if (candidates.length) {
-    const hybridCandidates = buildHybridLegendBoardCandidates(boardRegion, candidates);
-    const allCandidates = [...candidates, ...hybridCandidates];
-    allCandidates.sort((left, right) => right.score - left.score);
-    return allCandidates[0];
-  }
-  return null;
+  return detectLegendBoardFromAxisLabelsCandidate(boardRegion);
 }
 
 function isConfidentAxisLabelLegendBoard(
@@ -1364,69 +2141,33 @@ function detectLegendBoardFromAxisLabelsCandidate(
   }
 
   const croppedBoard = cropRaster(boardRegion, axisLabelBoard.cropBox);
-  const boardInnerCrop =
-    detectLegendBoardCoreCrop(croppedBoard) ??
-    detectLegendBoardInnerCrop(croppedBoard) ??
-    detectLightSeparatorBoardBox(croppedBoard);
-  const refinedBoard = boardInnerCrop ? cropRaster(croppedBoard, boardInnerCrop) : croppedBoard;
-  const refined =
-    detectLightSeparatorPixelArt(refinedBoard) ??
-    detectGridlinePixelArt(refinedBoard) ??
-    detectGappedGridPixelArt(refinedBoard) ??
-    detectBlockPixelArt(refinedBoard);
-
-  if (refined && isPlausibleLegendBoardDetection(refinedBoard, refined)) {
-    const logical =
-      refined.xSegments && refined.ySegments
-        ? sampleSegments(refinedBoard, refined.xSegments, refined.ySegments)
-        : sampleRegularGrid(
-            cropRaster(refinedBoard, refined.cropBox),
-            refined.gridWidth,
-            refined.gridHeight,
-          );
-    const refinedCropBox = boardInnerCrop
-      ? offsetCropBox(boardInnerCrop, refined.cropBox)
-      : refined.cropBox;
-    const cropBox = offsetCropBox(axisLabelBoard.cropBox, refinedCropBox);
-    const detection: DetectionResult = {
-      gridWidth: refined.gridWidth,
-      gridHeight: refined.gridHeight,
-      cropBox,
-      mode: `${refined.mode}+legend-axis-labels`,
-    };
-    return {
-      logical,
-      gridWidth: detection.gridWidth,
-      gridHeight: detection.gridHeight,
-      mode: detection.mode,
-      cropBox,
-      score: scoreLegendBoardCandidate(boardRegion, detection) + 10,
-    };
-  }
-
-  const inferredGridWidth = inferAxisLabelBoardGridCount(croppedBoard, "x", axisLabelBoard.gridWidth);
-  const inferredGridHeight = inferAxisLabelBoardGridCount(croppedBoard, "y", axisLabelBoard.gridHeight);
-  const logical = sampleRegularGrid(
-    cropRaster(boardRegion, axisLabelBoard.cropBox),
-    inferredGridWidth,
-    inferredGridHeight,
-  );
-  const fallbackDetection: DetectionResult = {
-    gridWidth: inferredGridWidth,
-    gridHeight: inferredGridHeight,
-    cropBox: axisLabelBoard.cropBox,
-    mode: `${axisLabelBoard.mode}+legend-axis-labels`,
-  };
-  if (!isPlausibleLegendBoardDetection(boardRegion, fallbackDetection)) {
+  const frameCrop = detectClosedRectangularBoardFrame(croppedBoard);
+  if (!frameCrop) {
     return null;
   }
+  const framedBoard = cropRaster(croppedBoard, frameCrop);
+  const detection: DetectionResult = {
+    gridWidth: axisLabelBoard.gridWidth,
+    gridHeight: axisLabelBoard.gridHeight,
+    cropBox: offsetCropBox(axisLabelBoard.cropBox, frameCrop),
+    mode: `${axisLabelBoard.mode}+legend-axis-labels`,
+  };
+  if (!isPlausibleLegendBoardDetection(boardRegion, detection)) {
+    return null;
+  }
+  const logical = sampleRegularGrid(
+    framedBoard,
+    detection.gridWidth,
+    detection.gridHeight,
+  );
+
   return {
     logical,
-    gridWidth: inferredGridWidth,
-    gridHeight: inferredGridHeight,
-    mode: fallbackDetection.mode,
-    cropBox: fallbackDetection.cropBox,
-    score: scoreLegendBoardCandidate(boardRegion, fallbackDetection) + 4,
+    gridWidth: detection.gridWidth,
+    gridHeight: detection.gridHeight,
+    mode: detection.mode,
+    cropBox: detection.cropBox,
+    score: scoreLegendBoardCandidate(boardRegion, detection) + 10,
   };
 }
 
@@ -1459,6 +2200,73 @@ function inferAxisLabelBoardGridCount(
 
   inferredCounts.sort((left, right) => left - right);
   return inferredCounts[0];
+}
+
+function detectSquareGridByPeriodSearch(
+  image: RasterImage,
+  approximatePeriod: number,
+): DetectionResult | null {
+  if (!Number.isFinite(approximatePeriod) || approximatePeriod < 6) {
+    return null;
+  }
+
+  const minPeriod = Math.max(6, Math.floor(approximatePeriod * 0.72));
+  const maxPeriod = Math.min(96, Math.ceil(approximatePeriod * 1.28));
+  let bestError = Number.POSITIVE_INFINITY;
+  const candidates: Array<DetectionResult & { period: number; error: number }> = [];
+
+  for (let period = minPeriod; period <= maxPeriod; period += 1) {
+    const gridWidth = Math.round(image.width / period);
+    const gridHeight = Math.round(image.height / period);
+    if (!isReasonableGrid(gridWidth, gridHeight)) {
+      continue;
+    }
+
+    const cellWidth = image.width / Math.max(1, gridWidth);
+    const cellHeight = image.height / Math.max(1, gridHeight);
+    const cellAspect = Math.max(cellWidth, cellHeight) / Math.max(1e-6, Math.min(cellWidth, cellHeight));
+    if (cellAspect > 1.14) {
+      continue;
+    }
+
+    const logical = sampleRegularGrid(image, gridWidth, gridHeight);
+    const reconstructed = scaleLogicalNearest(logical, image.width, image.height);
+    const error = meanAbsoluteError(image, reconstructed);
+    bestError = Math.min(bestError, error);
+    candidates.push({
+      gridWidth,
+      gridHeight,
+      cropBox: [0, 0, image.width, image.height],
+      mode: "detected-square-period-search",
+      period,
+      error,
+    });
+  }
+
+  if (!candidates.length || !Number.isFinite(bestError)) {
+    return null;
+  }
+
+  const acceptableError = bestError * 1.12 + 1.5;
+  const acceptableCandidates = candidates.filter((candidate) => candidate.error <= acceptableError);
+  acceptableCandidates.sort((left, right) => {
+    if (right.period !== left.period) {
+      return right.period - left.period;
+    }
+    return left.error - right.error;
+  });
+
+  const best = acceptableCandidates[0] ?? candidates.sort((left, right) => left.error - right.error)[0] ?? null;
+  if (!best) {
+    return null;
+  }
+
+  return {
+    gridWidth: best.gridWidth,
+    gridHeight: best.gridHeight,
+    cropBox: best.cropBox,
+    mode: best.mode,
+  };
 }
 
 function buildHybridLegendBoardCandidates(
@@ -1649,6 +2457,7 @@ function detectLegendBoardFromCandidateBox(
         score: scoreLegendBoardCandidate(boardRegion, detection) + 8,
       };
     }
+
   }
   return null;
 }
@@ -2431,7 +3240,7 @@ function buildCombinedLabelSignal(
       let matches = 0;
       for (let offset = bandStart; offset < bandEnd; offset += 1) {
         const pixel = axis === "x" ? getPixel(image, line, offset) : getPixel(image, offset, line);
-        if (isChartFramePixel(pixel)) {
+        if (isAxisLabelPixel(pixel)) {
           matches += 1;
         }
       }
@@ -4375,6 +5184,13 @@ function isChartFramePixel(pixel: Rgb) {
   return luminance <= 112 && chroma <= 88;
 }
 
+function isAxisLabelPixel(pixel: Rgb) {
+  const [red, green, blue] = pixel;
+  const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+  return luminance <= 164 && chroma <= 96;
+}
+
 function isLooseContentPixel(pixel: Rgb) {
   const [red, green, blue] = pixel;
   const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
@@ -4971,6 +5787,34 @@ function sampleRegularGrid(image: RasterImage, gridWidth: number, gridHeight: nu
     for (let column = 0; column < gridWidth; column += 1) {
       const left = xEdges[column];
       const right = Math.max(xEdges[column + 1], left + 1);
+      const color = representativeColorFromPatch(image, left, top, right, bottom);
+      const index = (row * gridWidth + column) * 4;
+      data[index] = color[0];
+      data[index + 1] = color[1];
+      data[index + 2] = color[2];
+      data[index + 3] = 255;
+    }
+  }
+
+  return { width: gridWidth, height: gridHeight, data };
+}
+
+function sampleFixedSquareGrid(
+  image: RasterImage,
+  gridWidth: number,
+  gridHeight: number,
+  cellSize: number,
+  gap: number,
+): RasterImage {
+  const pitch = cellSize + gap;
+  const data = new Uint8ClampedArray(gridWidth * gridHeight * 4);
+
+  for (let row = 0; row < gridHeight; row += 1) {
+    const top = row * pitch;
+    const bottom = Math.min(image.height, top + cellSize);
+    for (let column = 0; column < gridWidth; column += 1) {
+      const left = column * pitch;
+      const right = Math.min(image.width, left + cellSize);
       const color = representativeColorFromPatch(image, left, top, right, bottom);
       const index = (row * gridWidth + column) * 4;
       data[index] = color[0];

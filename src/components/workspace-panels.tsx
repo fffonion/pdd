@@ -159,7 +159,7 @@ export function WorkspacePanels({
   }
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+    <section className="flex min-h-[78vh] min-w-0 flex-col overflow-visible sm:min-h-[72vh] xl:min-h-0 xl:overflow-hidden">
       {result ? (
         <PixelEditorPanel
           t={t}

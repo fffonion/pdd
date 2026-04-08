@@ -191,8 +191,10 @@ export function PixelEditorPanel({
 
       const viewportWidth = window.innerWidth;
       const nextHeight =
-        viewportWidth < 1280
-          ? Math.max(540, Math.round(window.innerHeight * 0.72))
+        viewportWidth < 640
+          ? Math.max(680, Math.round(window.innerHeight * 0.9))
+          : viewportWidth < 1280
+            ? Math.max(620, Math.round(window.innerHeight * 0.82))
           : Math.max(420, Math.round(window.innerHeight - panelBodyRef.current.getBoundingClientRect().top - 24));
       setPanelViewportHeight((previous) => (previous === nextHeight ? previous : nextHeight));
     }
@@ -530,7 +532,7 @@ function PindouModePanel({
               type="button"
             >
               <FlipHorizontal className="h-4 w-4" />
-              <span>{flipHorizontalLabel}</span>
+              <span className="hidden sm:inline">{flipHorizontalLabel}</span>
             </button>
             <button
               className={clsx("flex h-9 w-9 items-center justify-center rounded-md border transition", theme.pill)}
@@ -635,7 +637,7 @@ function EditResultSummary({
       new Map(
         matchedColors.map((color) => [
           color.label,
-          getNearestPaletteOptions(color, paletteOptions, 5),
+          getNearestPaletteOptions(color, paletteOptions, 4),
         ]),
       ),
     [matchedColors, paletteOptions],
@@ -674,8 +676,8 @@ function EditResultSummary({
   const hoveredOptions = hoveredLabel
     ? nearestReplacementMap.get(hoveredLabel) ?? []
     : [];
-  const popupWidth = 196;
-  const popupHeight = 52 + hoveredOptions.length * 42;
+  const popupWidth = 182;
+  const popupHeight = 132;
   const popupLeft =
     hoveredPointer === null
       ? 12
@@ -715,12 +717,12 @@ function EditResultSummary({
             <div className={clsx("mb-2 text-xs font-semibold", theme.cardMuted)}>
               {hoveredLabel} {"->"}
             </div>
-            <div className="space-y-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               {hoveredOptions.map((option) => (
                 <button
                   key={`${hoveredLabel}-${option.label}`}
                   className={clsx(
-                    "flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left text-sm transition",
+                    "flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left text-xs transition",
                     theme.card,
                   )}
                   onPointerDown={(event) => {
@@ -739,10 +741,10 @@ function EditResultSummary({
                   type="button"
                 >
                   <span
-                    className="h-4 w-4 shrink-0 rounded-[4px] border border-black/10"
+                    className="h-3.5 w-3.5 shrink-0 rounded-[4px] border border-black/10"
                     style={{ backgroundColor: option.hex }}
                   />
-                  <span className={clsx("truncate font-semibold", theme.cardTitle)}>
+                  <span className={clsx("min-w-0 truncate font-semibold", theme.cardTitle)}>
                     {option.label}
                   </span>
                 </button>
@@ -779,7 +781,7 @@ function EditResultSummary({
             {t.labelsCount(activeMatchedColorCount)}
           </span>
         </div>
-        <div className="mt-4 flex max-h-[240px] flex-wrap gap-2 overflow-auto pr-1">
+        <div className="mt-4 flex max-h-[132px] flex-wrap gap-2 overflow-auto pr-1 sm:max-h-[180px]">
           {matchedColors.map((color) => (
             <button
               key={color.label}
@@ -2181,13 +2183,19 @@ function shouldShowStageCellLabel(
   cell: EditableCell,
   stageMode: EditorPanelMode,
   focusedLabel: string | null | undefined,
-  _cellSize: number,
+  cellSize: number,
 ) {
   if (stageMode === "edit") {
     return false;
   }
 
   if (!cell.label) {
+    return false;
+  }
+
+  const minimumReadableCellSize = Math.max(16, cell.label.length * 5 + 6);
+  const estimatedFontSize = Math.max(5, Math.min(10, Math.round(cellSize * 0.22)));
+  if (cellSize < minimumReadableCellSize || estimatedFontSize < 8) {
     return false;
   }
 
