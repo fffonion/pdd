@@ -88,6 +88,7 @@ export interface ColorCount {
 export interface EditableCell {
   label: string | null;
   hex: string | null;
+  source?: "detected" | "manual" | null;
 }
 
 export interface PaletteOption {
@@ -6172,6 +6173,7 @@ function matchPalette(logical: RasterImage, paletteDefinition: PaletteDefinition
     cells.push(normalizeEditableCell({
       label: best.label,
       hex: best.hex,
+      source: "detected",
     }));
   }
 
@@ -6988,12 +6990,13 @@ function belongsToSameBackgroundComponent(
 
 function normalizeEditableCell(cell: EditableCell): EditableCell {
   if (!cell.label || !cell.hex) {
-    return { label: null, hex: null };
+    return { label: null, hex: null, source: null };
   }
 
   return {
     label: cell.label,
     hex: cell.hex.toUpperCase(),
+    source: cell.source ?? "detected",
   };
 }
 

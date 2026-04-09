@@ -89,6 +89,7 @@ export default function App() {
   const editorDraftRef = useRef<EditableCell[] | null>(null);
   const inputUrlRef = useRef<string | null>(null);
   const resultUrlRef = useRef<string | null>(null);
+  const disabledResultLabelsRef = useRef<string[]>([]);
 
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
   const [themeMode, setThemeMode] = useState<ThemeMode>(readInitialThemeMode);
@@ -166,6 +167,10 @@ export default function App() {
     updatedLabel: t.generateChart,
   });
 
+  useEffect(() => {
+    disabledResultLabelsRef.current = disabledResultLabels;
+  }, [disabledResultLabels]);
+
   function handleGridWidthChange(value: string) {
     setGridWidth(value);
     setManualLastEditedAxis("width");
@@ -236,6 +241,7 @@ export default function App() {
     setEditTool("pan");
     setEditZoom(1);
     setDisabledResultLabels([]);
+    disabledResultLabelsRef.current = [];
     editorHistoryRef.current = [];
     editorHistoryIndexRef.current = -1;
     editorDraftRef.current = null;
@@ -366,6 +372,7 @@ export default function App() {
     setEditorHistory(base);
     setEditorHistoryIndex(base.length - 1);
     if (disabledLabelsOverride) {
+      disabledResultLabelsRef.current = disabledLabelsOverride;
       setDisabledResultLabels(disabledLabelsOverride);
     }
     void refreshEditedChart(snapshot, disabledLabelsOverride);
@@ -382,7 +389,7 @@ export default function App() {
     if (!draft) {
       return;
     }
-    commitEditorSnapshot(draft);
+    commitEditorSnapshot(draft, disabledResultLabelsRef.current);
   }
 
   function handleUndo() {
@@ -417,6 +424,7 @@ export default function App() {
   }
 
   function applyDisabledResultLabels(nextDisabledLabels: string[]) {
+    disabledResultLabelsRef.current = nextDisabledLabels;
     setDisabledResultLabels(nextDisabledLabels);
 
     if (editorBaseCells.length > 0) {
@@ -474,6 +482,18 @@ export default function App() {
       return;
     }
 
+    const nextDisabledLabels =
+      editTool !== "erase" &&
+      selectedLabel !== EMPTY_SELECTION_LABEL &&
+      disabledResultLabels.includes(selectedLabel)
+        ? disabledResultLabels.filter((label) => label !== selectedLabel)
+        : undefined;
+
+    if (nextDisabledLabels) {
+      disabledResultLabelsRef.current = nextDisabledLabels;
+      setDisabledResultLabels(nextDisabledLabels);
+    }
+
     const replacement = buildReplacementCell(selectedLabel, paletteOptions, editTool);
     const nextCells =
       editTool === "fill"
@@ -503,7 +523,7 @@ export default function App() {
       return;
     }
 
-    commitEditorSnapshot(nextCells);
+    commitEditorSnapshot(nextCells, nextDisabledLabels);
   }
 
   useEffect(() => {
@@ -872,6 +892,8 @@ export default function App() {
             onReplaceMatchedColor={replaceMatchedColor}
             selectedLabel={selectedLabel}
             onSelectedLabelChange={setSelectedLabel}
+            colorSystemId={colorSystemId}
+            onColorSystemIdChange={setColorSystemId}
             paletteOptions={paletteOptions}
             currentCells={renderedEditorCells}
             onApplyCell={applyCellEdit}
@@ -991,8 +1013,6 @@ export default function App() {
             onCropChange={handleManualCropChange}
             busy={busy}
             isDark={isDark}
-            colorSystemId={colorSystemId}
-            onColorSystemIdChange={setColorSystemId}
             gridMode={gridMode}
             onGridModeChange={setGridMode}
             gridWidth={gridWidth}
@@ -1039,6 +1059,8 @@ export default function App() {
             onReplaceMatchedColor={replaceMatchedColor}
             selectedLabel={selectedLabel}
             onSelectedLabelChange={setSelectedLabel}
+            colorSystemId={colorSystemId}
+            onColorSystemIdChange={setColorSystemId}
             paletteOptions={paletteOptions}
             currentCells={renderedEditorCells}
             onApplyCell={applyCellEdit}
@@ -1219,7 +1241,11 @@ function cellsEqual(left: EditableCell[], right: EditableCell[]) {
   }
 
   for (let index = 0; index < left.length; index += 1) {
-    if (left[index]?.label !== right[index]?.label || left[index]?.hex !== right[index]?.hex) {
+    if (
+      left[index]?.label !== right[index]?.label ||
+      left[index]?.hex !== right[index]?.hex ||
+      (left[index]?.source ?? null) !== (right[index]?.source ?? null)
+    ) {
       return false;
     }
   }
@@ -1233,16 +1259,16 @@ function buildReplacementCell(
   tool: EditTool,
 ): EditableCell {
   if (tool === "erase" || selectedLabel === EMPTY_SELECTION_LABEL) {
-    return { label: null, hex: null };
+    return { label: null, hex: null, source: null };
   }
 
   const selected = paletteOptions.find((entry) => entry.label === selectedLabel);
 
   if (!selected) {
-    return { label: null, hex: null };
+    return { label: null, hex: null, source: null };
   }
 
-  return { label: selected.label, hex: selected.hex };
+  return { label: selected.label, hex: selected.hex, source: "manual" };
 }
 
 function replaceSingleCell(
@@ -1514,6 +1540,9 @@ function applyDisabledColorReplacements(
 
   return cells.map((cell) => {
     if (!cell.label) {
+      return { ...cell };
+    }
+    if (cell.source === "manual") {
       return { ...cell };
     }
     const replacement = replacementMap.get(cell.label);

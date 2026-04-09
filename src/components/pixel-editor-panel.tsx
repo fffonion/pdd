@@ -22,7 +22,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import { CanvasEditorStage, clampEditorZoom, clampPindouZoom } from "./canvas-editor-stage";
 import type { Messages } from "../lib/i18n";
-import { measureHexDistance255, type EditableCell, type NormalizedCropRect } from "../lib/mard";
+import { colorSystemOptions, measureHexDistance255, type EditableCell, type NormalizedCropRect } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
 
 type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
@@ -52,6 +52,8 @@ export function PixelEditorPanel({
   onEditFlipHorizontalChange,
   selectedLabel,
   selectedHex,
+  colorSystemId,
+  onColorSystemIdChange,
   paletteOptions,
   onSelectedLabelChange,
   onApplyCell,
@@ -103,6 +105,8 @@ export function PixelEditorPanel({
   onEditFlipHorizontalChange: (value: boolean) => void;
   selectedLabel: string;
   selectedHex: string | null;
+  colorSystemId: string;
+  onColorSystemIdChange: (value: string) => void;
   paletteOptions: Array<{ label: string; hex: string }>;
   onSelectedLabelChange: (label: string) => void;
   onApplyCell: (index: number) => void;
@@ -333,10 +337,10 @@ export function PixelEditorPanel({
                     t={t}
                     isDark={isDark}
                     editTool={editTool}
-                    editFlipHorizontal={editFlipHorizontal}
-                    selectedLabel={selectedLabel}
-                    selectedHex={selectedHex}
-                    paletteOptions={paletteOptions}
+                  editFlipHorizontal={editFlipHorizontal}
+                  selectedLabel={selectedLabel}
+                  selectedHex={selectedHex}
+                  paletteOptions={paletteOptions}
                     brushSize={brushSize}
                     onBrushSizeChange={onBrushSizeChange}
                     editZoom={editZoom}
@@ -355,6 +359,8 @@ export function PixelEditorPanel({
                   disabledResultLabels={disabledResultLabels}
                   matchedCoveragePercent={matchedCoveragePercent}
                   activeMatchedColorCount={activeMatchedColorCount}
+                  colorSystemId={colorSystemId}
+                  onColorSystemIdChange={onColorSystemIdChange}
                   onMatchedCoveragePercentChange={onMatchedCoveragePercentChange}
                   onToggleMatchedColor={onToggleMatchedColor}
                   onReplaceMatchedColor={onReplaceMatchedColor}
@@ -618,6 +624,8 @@ function EditResultSummary({
   disabledResultLabels,
   matchedCoveragePercent,
   activeMatchedColorCount,
+  colorSystemId,
+  onColorSystemIdChange,
   onMatchedCoveragePercentChange,
   onToggleMatchedColor,
   onReplaceMatchedColor,
@@ -629,6 +637,8 @@ function EditResultSummary({
   disabledResultLabels: string[];
   matchedCoveragePercent: number;
   activeMatchedColorCount: number;
+  colorSystemId: string;
+  onColorSystemIdChange: (value: string) => void;
   onMatchedCoveragePercentChange: (value: number) => void;
   onToggleMatchedColor: (label: string) => void;
   onReplaceMatchedColor: (sourceLabel: string, targetLabel: string) => void;
@@ -1034,23 +1044,39 @@ function EditResultSummary({
               maxWidth: "calc(100vw - 24px)",
             }}
           >
-            <div className="flex items-center gap-3">
-              <Slider.Root
-                className="relative flex h-5 flex-1 touch-none select-none items-center"
-                max={100}
-                min={0}
-                step={1}
-                value={[matchedCoveragePercent]}
-                onValueChange={(next) => onMatchedCoveragePercentChange(next[0] ?? 100)}
-              >
-                <Slider.Track className={clsx("relative h-2 grow rounded-full", theme.sliderTrack)}>
-                  <Slider.Range className={clsx("absolute h-full rounded-full", theme.sliderRange)} />
-                </Slider.Track>
-                <Slider.Thumb className={clsx("block h-5 w-5 rounded-full border shadow outline-none", theme.sliderThumb)} />
-              </Slider.Root>
-              <span className={clsx("shrink-0 text-right text-sm font-semibold", theme.cardTitle)}>
-                {t.labelsCount(activeMatchedColorCount)}
-              </span>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 sm:w-[220px]">
+                <select
+                  aria-label={t.colorSystemTitle}
+                  className={clsx("h-10 w-full rounded-md border px-3 text-sm outline-none transition", theme.input)}
+                  value={colorSystemId}
+                  onChange={(event) => onColorSystemIdChange(event.target.value)}
+                >
+                  {colorSystemOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <Slider.Root
+                  className="relative flex h-5 flex-1 touch-none select-none items-center"
+                  max={100}
+                  min={0}
+                  step={1}
+                  value={[matchedCoveragePercent]}
+                  onValueChange={(next) => onMatchedCoveragePercentChange(next[0] ?? 100)}
+                >
+                  <Slider.Track className={clsx("relative h-2 grow rounded-full", theme.sliderTrack)}>
+                    <Slider.Range className={clsx("absolute h-full rounded-full", theme.sliderRange)} />
+                  </Slider.Track>
+                  <Slider.Thumb className={clsx("block h-5 w-5 rounded-full border shadow outline-none", theme.sliderThumb)} />
+                </Slider.Root>
+                <span className={clsx("shrink-0 text-right text-sm font-semibold", theme.cardTitle)}>
+                  {t.labelsCount(activeMatchedColorCount)}
+                </span>
+              </div>
             </div>
             <div
               className="mt-3 grid max-h-[220px] gap-2 overflow-auto pr-1"

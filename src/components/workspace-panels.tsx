@@ -32,6 +32,8 @@ export function WorkspacePanels({
   onReplaceMatchedColor,
   selectedLabel,
   onSelectedLabelChange,
+  colorSystemId,
+  onColorSystemIdChange,
   paletteOptions,
   currentCells,
   onApplyCell,
@@ -77,6 +79,8 @@ export function WorkspacePanels({
   onReplaceMatchedColor: (sourceLabel: string, targetLabel: string) => void;
   selectedLabel: string;
   onSelectedLabelChange: (label: string) => void;
+  colorSystemId: string;
+  onColorSystemIdChange: (value: string) => void;
   paletteOptions: Array<{ label: string; hex: string }>;
   currentCells: ProcessResult["cells"];
   onApplyCell: (index: number) => void;
@@ -125,6 +129,8 @@ export function WorkspacePanels({
             onEditFlipHorizontalChange={onEditFlipHorizontalChange}
             selectedLabel={selectedLabel}
             selectedHex={paletteOptions.find((entry) => entry.label === selectedLabel)?.hex ?? null}
+            colorSystemId={colorSystemId}
+            onColorSystemIdChange={onColorSystemIdChange}
             paletteOptions={paletteOptions}
             onSelectedLabelChange={onSelectedLabelChange}
             onApplyCell={onApplyCell}
@@ -185,6 +191,8 @@ export function WorkspacePanels({
           onEditFlipHorizontalChange={onEditFlipHorizontalChange}
           selectedLabel={selectedLabel}
           selectedHex={paletteOptions.find((entry) => entry.label === selectedLabel)?.hex ?? null}
+          colorSystemId={colorSystemId}
+          onColorSystemIdChange={onColorSystemIdChange}
           paletteOptions={paletteOptions}
           onSelectedLabelChange={onSelectedLabelChange}
           onApplyCell={onApplyCell}

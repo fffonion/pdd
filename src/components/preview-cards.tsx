@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Crop, ImageUp, RotateCcw } from "lucide-react";
+import { ChevronDown, Crop, ImageUp, RotateCcw } from "lucide-react";
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { NormalizedCropRect } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
@@ -39,6 +39,8 @@ export function OriginalPreviewCard({
   displayCropRect,
   onCropChange,
   isDark,
+  collapsed = false,
+  onToggleCollapsed,
 }: {
   title: string;
   file: File | null;
@@ -56,6 +58,8 @@ export function OriginalPreviewCard({
   displayCropRect: NormalizedCropRect | null;
   onCropChange: (cropRect: NormalizedCropRect | null) => void;
   isDark: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   const theme = getThemeClasses(isDark);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -237,107 +241,119 @@ export function OriginalPreviewCard({
                 </button>
               </>
             ) : null}
+            {onToggleCollapsed ? (
+              <button
+                className={clsx(
+                  "flex h-9 w-9 items-center justify-center rounded-md text-xs font-semibold transition sm:h-8 sm:w-8",
+                  theme.pill,
+                )}
+                aria-label={collapsed ? title : title}
+                onClick={onToggleCollapsed}
+                type="button"
+              >
+                <ChevronDown
+                  aria-hidden="true"
+                  className={clsx("h-4 w-4 transition-transform", collapsed ? "-rotate-90" : "rotate-0")}
+                />
+              </button>
+            ) : null}
           </div>
         </div>
 
-        {!file ? (
-          <label className={clsx("flex cursor-pointer flex-col items-center justify-center rounded-[10px] border border-dashed px-4 py-6 text-center transition sm:rounded-[12px] sm:py-7 xl:rounded-[14px] xl:py-8", theme.dropzone)}>
+        <input
+          ref={fileInputRef}
+          className="hidden"
+          type="file"
+          accept="image/*"
+          onChange={(event) => onFileSelection(event.target.files?.[0] ?? null)}
+        />
+
+        {!collapsed && !file ? (
+          <label
+            className={clsx("flex cursor-pointer flex-col items-center justify-center rounded-[10px] border border-dashed px-4 py-6 text-center transition sm:rounded-[12px] sm:py-7 xl:rounded-[14px] xl:py-8", theme.dropzone)}
+            onClick={handleSelectFile}
+          >
             <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
               {sourceChooseImage}
             </span>
             <span className={clsx("mt-2 text-xs", theme.cardMuted)}>{sourceStayInTab}</span>
-            <input
-              ref={fileInputRef}
-              className="hidden"
-              type="file"
-              accept="image/*"
-              onChange={(event) => onFileSelection(event.target.files?.[0] ?? null)}
-            />
           </label>
         ) : null}
-
-        {file ? (
-          <input
-            ref={fileInputRef}
-            className="hidden"
-            type="file"
-            accept="image/*"
-            onChange={(event) => onFileSelection(event.target.files?.[0] ?? null)}
-          />
-        ) : null}
       </div>
-      <div className={clsx("mt-4 flex min-h-[220px] items-center justify-center overflow-hidden rounded-[10px] sm:min-h-[280px] sm:rounded-[12px]", theme.previewStage)}>
-        {url ? (
-          <div
-            ref={previewRef}
-            className="relative inline-block max-h-[52vh] max-w-full touch-none sm:max-h-[66vh] xl:max-h-[72vh]"
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-          >
-            <img
-              ref={imageRef}
-              className="max-h-[52vh] max-w-full object-contain sm:max-h-[66vh] xl:max-h-[72vh]"
-              draggable={false}
-              src={url}
-              alt={title}
-            />
-            {visibleCrop ? (
-              <div
-                className="absolute"
-                style={normalizedCropToStyle(visibleCrop)}
-              >
+      {!collapsed ? (
+        <div className={clsx("mt-4 flex min-h-[220px] items-center justify-center overflow-hidden rounded-[10px] sm:min-h-[280px] sm:rounded-[12px]", theme.previewStage)}>
+          {url ? (
+            <div
+              ref={previewRef}
+              className="relative inline-block max-h-[52vh] max-w-full touch-none sm:max-h-[66vh] xl:max-h-[72vh]"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            >
+              <img
+                ref={imageRef}
+                className="max-h-[52vh] max-w-full object-contain sm:max-h-[66vh] xl:max-h-[72vh]"
+                draggable={false}
+                src={url}
+                alt={title}
+              />
+              {visibleCrop ? (
+                <div
+                  className="absolute"
+                  style={normalizedCropToStyle(visibleCrop)}
+                >
+                  <div
+                    className={clsx(
+                      "absolute inset-0 border-2 border-amber-400 bg-amber-300/18 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]",
+                      cropMode || displayCropRect ? "cursor-move pointer-events-auto" : "pointer-events-none",
+                    )}
+                    onPointerDown={handleMoveStart}
+                  />
+                  {cropMode || displayCropRect ? (
+                    <>
+                      {(
+                        [
+                          ["nw", "left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize"],
+                          ["ne", "right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize"],
+                          ["sw", "left-0 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize"],
+                          ["se", "right-0 bottom-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize"],
+                        ] as const
+                      ).map(([handle, position]) => (
+                        <button
+                          key={handle}
+                          className={clsx(
+                            "absolute z-10 h-4 w-4 rounded-full border-2 border-white bg-amber-400 shadow",
+                            position,
+                          )}
+                          onPointerDown={(event) => handleResizeStart(handle, event)}
+                          type="button"
+                        />
+                      ))}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : file && busy ? (
+            <div className="flex w-full max-w-[320px] flex-col items-center px-6">
+              <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
                 <div
                   className={clsx(
-                    "absolute inset-0 border-2 border-amber-400 bg-amber-300/18 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]",
-                    cropMode || displayCropRect ? "cursor-move pointer-events-auto" : "pointer-events-none",
+                    "absolute inset-y-0 w-1/3 rounded-full",
+                    isDark ? "bg-amber-200/90" : "bg-amber-700/85",
                   )}
-                  onPointerDown={handleMoveStart}
+                  style={{
+                    animation: "pindou-indeterminate 1.2s ease-in-out infinite",
+                  }}
                 />
-                {cropMode || displayCropRect ? (
-                  <>
-                    {(
-                      [
-                        ["nw", "left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize"],
-                        ["ne", "right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize"],
-                        ["sw", "left-0 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize"],
-                        ["se", "right-0 bottom-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize"],
-                      ] as const
-                    ).map(([handle, position]) => (
-                      <button
-                        key={handle}
-                        className={clsx(
-                          "absolute z-10 h-4 w-4 rounded-full border-2 border-white bg-amber-400 shadow",
-                          position,
-                        )}
-                        onPointerDown={(event) => handleResizeStart(handle, event)}
-                        type="button"
-                      />
-                    ))}
-                  </>
-                ) : null}
               </div>
-            ) : null}
-          </div>
-        ) : file && busy ? (
-          <div className="flex w-full max-w-[320px] flex-col items-center px-6">
-            <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
-              <div
-                className={clsx(
-                  "absolute inset-y-0 w-1/3 rounded-full",
-                  isDark ? "bg-amber-200/90" : "bg-amber-700/85",
-                )}
-                style={{
-                  animation: "pindou-indeterminate 1.2s ease-in-out infinite",
-                }}
-              />
             </div>
-          </div>
-        ) : (
-          <p className={clsx("px-8 text-center text-sm", theme.cardMuted)}>{emptyText}</p>
-        )}
-      </div>
+          ) : (
+            <p className={clsx("px-8 text-center text-sm", theme.cardMuted)}>{emptyText}</p>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

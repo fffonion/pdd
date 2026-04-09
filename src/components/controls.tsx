@@ -2,7 +2,8 @@ import * as Label from "@radix-ui/react-label";
 import * as Slider from "@radix-ui/react-slider";
 import * as Switch from "@radix-ui/react-switch";
 import clsx from "clsx";
-import { LaptopMinimal, Languages, Moon, Sun } from "lucide-react";
+import { ChevronDown, LaptopMinimal, Languages, Moon, Sun } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Locale } from "../lib/i18n";
 import { getThemeClasses, type ThemeMode } from "../lib/theme";
 
@@ -289,5 +290,55 @@ export function SliderRow({
         <Slider.Thumb className={clsx("block h-5 w-5 rounded-full border shadow outline-none", theme.sliderThumb)} />
       </Slider.Root>
     </div>
+  );
+}
+
+export function CollapsibleSection({
+  title,
+  subtitle,
+  collapsed,
+  onToggle,
+  isDark,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  isDark: boolean;
+  children: ReactNode;
+}) {
+  const theme = getThemeClasses(isDark);
+
+  return (
+    <section
+      className={clsx(
+        "rounded-[10px] border p-4 transition-colors sm:rounded-[12px] xl:rounded-[14px]",
+        theme.card,
+      )}
+    >
+      <button
+        className="flex w-full items-start justify-between gap-3 text-left"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="min-w-0">
+          <p className={clsx("text-sm font-semibold", theme.cardTitle)}>{title}</p>
+          {subtitle ? <p className={clsx("mt-1 text-xs", theme.cardMuted)}>{subtitle}</p> : null}
+        </div>
+        <span
+          className={clsx(
+            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition",
+            theme.pill,
+          )}
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className={clsx("h-4 w-4 transition-transform", collapsed ? "-rotate-90" : "rotate-0")}
+          />
+        </span>
+      </button>
+      {!collapsed ? <div className="mt-4">{children}</div> : null}
+    </section>
   );
 }

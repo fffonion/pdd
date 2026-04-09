@@ -1,10 +1,10 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import clsx from "clsx";
+import { useState } from "react";
 import type { Messages } from "../lib/i18n";
 import type { NormalizedCropRect } from "../lib/mard";
-import { colorSystemOptions } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
-import { NumberSliderField, SliderRow, SwitchRow } from "./controls";
+import { CollapsibleSection, NumberSliderField, SliderRow, SwitchRow } from "./controls";
 import { OriginalPreviewCard } from "./preview-cards";
 
 type GridMode = "auto" | "manual";
@@ -20,8 +20,6 @@ export function SidebarPanel({
   onCropChange,
   busy,
   isDark,
-  colorSystemId,
-  onColorSystemIdChange,
   gridMode,
   onGridModeChange,
   gridWidth,
@@ -50,8 +48,6 @@ export function SidebarPanel({
   onCropChange: (cropRect: NormalizedCropRect | null) => void;
   busy: boolean;
   isDark: boolean;
-  colorSystemId: string;
-  onColorSystemIdChange: (value: string) => void;
   gridMode: GridMode;
   onGridModeChange: (value: GridMode) => void;
   gridWidth: string;
@@ -71,6 +67,18 @@ export function SidebarPanel({
   onFileSelection: (file: File | null) => void;
 }) {
   const theme = getThemeClasses(isDark);
+  const [collapsedSections, setCollapsedSections] = useState({
+    source: false,
+    grid: false,
+    polish: false,
+  });
+
+  function toggleSection(section: keyof typeof collapsedSections) {
+    setCollapsedSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
+  }
 
   return (
     <section
@@ -97,12 +105,17 @@ export function SidebarPanel({
           displayCropRect={displayCropRect}
           onCropChange={onCropChange}
           isDark={isDark}
+          collapsed={collapsedSections.source}
+          onToggleCollapsed={() => toggleSection("source")}
         />
 
-        <section className={clsx("rounded-[10px] border p-4 transition-colors sm:rounded-[12px] xl:rounded-[14px]", theme.card)}>
-          <p className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.gridTitle}</p>
-          <p className={clsx("mt-1 text-xs", theme.cardMuted)}>{t.gridSubtitle}</p>
-
+        <CollapsibleSection
+          title={t.gridTitle}
+          subtitle={t.gridSubtitle}
+          collapsed={collapsedSections.grid}
+          onToggle={() => toggleSection("grid")}
+          isDark={isDark}
+        >
           <Tabs.Root className="mt-4" value={gridMode} onValueChange={(value) => onGridModeChange(value as GridMode)}>
             <Tabs.List className={clsx("grid grid-cols-2 rounded-lg p-1", theme.segmented)}>
               <Tabs.Trigger
@@ -156,11 +169,15 @@ export function SidebarPanel({
               </div>
             </Tabs.Content>
           </Tabs.Root>
-        </section>
+        </CollapsibleSection>
 
-        <section className={clsx("rounded-[10px] border p-4 transition-colors sm:rounded-[12px] xl:rounded-[14px]", theme.card)}>
-          <p className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.polishTitle}</p>
-          <div className="mt-4 space-y-4">
+        <CollapsibleSection
+          title={t.polishTitle}
+          collapsed={collapsedSections.polish}
+          onToggle={() => toggleSection("polish")}
+          isDark={isDark}
+        >
+          <div className="space-y-4">
             <SwitchRow
               id="reduce-colors"
               title={t.reduceColorsTitle}
@@ -203,23 +220,7 @@ export function SidebarPanel({
               isDark={isDark}
             />
           </div>
-        </section>
-
-        <section className={clsx("rounded-[10px] border p-4 transition-colors sm:rounded-[12px] xl:rounded-[14px]", theme.card)}>
-          <p className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.colorSystemTitle}</p>
-          <p className={clsx("mt-1 text-xs", theme.cardMuted)}>{t.colorSystemSubtitle}</p>
-          <select
-            className={clsx("mt-4 w-full rounded-lg border px-4 py-3 text-sm outline-none transition", theme.input)}
-            value={colorSystemId}
-            onChange={(event) => onColorSystemIdChange(event.target.value)}
-          >
-            {colorSystemOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </section>
+        </CollapsibleSection>
       </div>
     </section>
   );
