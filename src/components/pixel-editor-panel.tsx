@@ -306,7 +306,8 @@ export function PixelEditorPanel({
                   ? clsx(
                       isDark ? theme.controlSegment : theme.panel,
                       theme.cardTitle,
-                      "translate-y-px shadow-sm",
+                      "translate-y-px border border-b-transparent shadow-sm",
+                      isDark ? "border-white/14" : "border-stone-300",
                     )
                   : clsx(
                       isDark ? theme.panel : theme.controlSegment,
@@ -322,7 +323,7 @@ export function PixelEditorPanel({
         {resultReady ? (
           <a
             className={clsx(
-              "shrink-0 rounded-t-[10px] px-4 py-2 text-sm font-semibold transition",
+              "shrink-0 rounded-t-[10px] border px-4 py-2 text-sm font-semibold transition",
               theme.primaryButton,
             )}
             href={resultUrl}
@@ -333,7 +334,7 @@ export function PixelEditorPanel({
         ) : (
           <button
             className={clsx(
-              "shrink-0 rounded-t-[10px] px-4 py-2 text-sm font-semibold transition",
+              "shrink-0 rounded-t-[10px] border px-4 py-2 text-sm font-semibold transition",
               theme.disabledButton,
             )}
             disabled
@@ -1028,12 +1029,13 @@ function PindouModePanel({
               />
             </div>
             <button
-              className={clsx("flex h-10 w-10 shrink-0 items-center justify-center rounded-md border transition", theme.pill)}
+              className={clsx("flex h-10 shrink-0 items-center gap-2 rounded-md border px-3 transition", theme.pill)}
               onClick={() => onFocusViewOpenChange(!focusViewOpen)}
               title={t.pindouFocusView}
               type="button"
             >
               <Maximize2 className="h-4 w-4" />
+              <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.pindouFocusView}</span>
             </button>
           </div>
           <div className={clsx("h-px w-full shrink-0", theme.divider)} />
@@ -1643,7 +1645,7 @@ function EditResultSummary({
       : detailsShowBelow
         ? triggerRect.bottom - 1
         : Math.max(12, triggerRect.top - 248 + 1);
-  const detailsColumns = Math.max(1, Math.min(6, Math.floor((detailsPopupWidth - 24) / 112)));
+  const detailsBlockWidth = 96;
   const popupWidth = 182;
   const popupHeight = 132;
   const anchorCenterX = hoveredAnchorRect ? hoveredAnchorRect.left + hoveredAnchorRect.width / 2 : null;
@@ -1845,14 +1847,14 @@ function EditResultSummary({
               </div>
             </div>
             <div
-              className="mt-3 grid max-h-[220px] gap-2 overflow-auto pr-1"
-              style={{ gridTemplateColumns: `repeat(${detailsColumns}, minmax(0, 1fr))` }}
+              className="mt-3 grid max-h-[220px] content-start justify-start gap-2 overflow-auto pr-1"
+              style={{ gridTemplateColumns: `repeat(auto-fill, ${detailsBlockWidth}px)` }}
             >
               {matchedColors.map((color) => (
                 <button
                   key={color.label}
                   className={clsx(
-                    "grid min-h-[58px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-3 py-2 text-left transition-colors",
+                    "grid min-h-[50px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-left transition-colors",
                     theme.card,
                   )}
                   onClick={() => onToggleMatchedColor(color.label)}
@@ -1864,7 +1866,7 @@ function EditResultSummary({
                   }}
                 >
                   <span
-                    className="h-5 w-5 rounded-full border border-black/10"
+                    className="h-4 w-4 rounded-full border border-black/10"
                     onMouseEnter={
                       disabledLabelSet.has(color.label)
                         ? undefined

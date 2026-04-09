@@ -590,6 +590,11 @@ export async function exportChartFromCells(options: {
     ...defaultProcessMessages,
     ...options.messages,
   };
+  const outputFileName = defaultOutputName(
+    options.fileName,
+    options.gridWidth,
+    options.gridHeight,
+  );
   const paletteDefinition = getPaletteDefinition(options.colorSystemId);
   const normalizedCells = options.cells.map((cell) => normalizeEditableCell(cell));
   const colors = summarizeCells(normalizedCells, paletteDefinition);
@@ -609,7 +614,7 @@ export async function exportChartFromCells(options: {
     {
       cells: normalizedCells,
       colorSystemId: paletteDefinition.id,
-      fileName: options.fileName,
+      fileName: outputFileName,
       gridWidth: options.gridWidth,
       gridHeight: options.gridHeight,
       preferredEditorMode: "pindou",
@@ -618,7 +623,7 @@ export async function exportChartFromCells(options: {
   );
   return {
     blob,
-    fileName: options.fileName,
+    fileName: outputFileName,
     colorSystemId: paletteDefinition.id,
     paletteColorsUsed: colors.length,
     colors,
@@ -685,7 +690,7 @@ async function tryLoadEmbeddedChartResult(file: File): Promise<ProcessResult | n
   const uniqueColors = colors.length;
   return {
     blob: file,
-    fileName: metadata.fileName || defaultOutputName(file.name, metadata.gridWidth, metadata.gridHeight),
+    fileName: defaultOutputName(file.name, metadata.gridWidth, metadata.gridHeight),
     colorSystemId: paletteDefinition.id,
     detectionMode: "embedded-chart-metadata",
     effectiveReduceColors: true,
@@ -917,9 +922,15 @@ function crc32(bytes: Uint8Array) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function defaultOutputName(fileName: string, gridWidth: number, gridHeight: number) {
+function normalizeOutputStem(fileName: string) {
   const dotIndex = fileName.lastIndexOf(".");
-  const stem = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
+  const rawStem = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
+  const stem = rawStem.replace(/^【拼豆豆】/u, "").trim();
+  return stem || "图纸";
+}
+
+function defaultOutputName(fileName: string, gridWidth: number, gridHeight: number) {
+  const stem = normalizeOutputStem(fileName);
   void gridWidth;
   void gridHeight;
   return `【拼豆豆】${stem}.png`;

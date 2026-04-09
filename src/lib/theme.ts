@@ -4,13 +4,13 @@ export function getThemeClasses(isDark: boolean) {
   return isDark
     ? {
         page:
-          "bg-[linear-gradient(180deg,rgba(94,69,45,0.12)_0,rgba(94,69,45,0.12)_1px,transparent_1px,transparent_22px),linear-gradient(90deg,rgba(94,69,45,0.08)_0,rgba(94,69,45,0.08)_1px,transparent_1px,transparent_22px),linear-gradient(180deg,#120e0b_0%,#19130f_32%,#211912_68%,#2a2018_100%)] text-stone-100",
+          "bg-[linear-gradient(180deg,rgba(86,72,58,0.1)_0,rgba(86,72,58,0.1)_1px,transparent_1px,transparent_22px),linear-gradient(90deg,rgba(86,72,58,0.07)_0,rgba(86,72,58,0.07)_1px,transparent_1px,transparent_22px),linear-gradient(180deg,#0f0c0a_0%,#15110e_32%,#1b1612_68%,#221b16_100%)] text-stone-100",
         panel:
-          "border-white/14 bg-[#15110d]/78 shadow-[0_24px_80px_rgba(0,0,0,0.4)]",
+          "border-white/14 bg-[#14100d]/82 shadow-[0_24px_80px_rgba(0,0,0,0.4)]",
         hero: "bg-[#ead4b8] text-[#251910]",
         heroBadge: "text-[#7f5c34]",
         heroText: "text-[#4d3927]",
-        card: "border-white/14 bg-[#1f1914] shadow-[0_10px_30px_rgba(0,0,0,0.2)]",
+        card: "border-white/14 bg-[#1c1713] shadow-[0_10px_30px_rgba(0,0,0,0.2)]",
         cardTitle: "text-stone-100",
         cardMuted: "text-stone-400",
         tag: "bg-[#32281f] text-stone-300",
@@ -19,7 +19,7 @@ export function getThemeClasses(isDark: boolean) {
         segmented: "bg-[#2b2119]",
         segmentedTrigger:
           "text-stone-400 data-[state=active]:bg-[#f3dec0] data-[state=active]:text-[#24170f]",
-        subtlePanel: "bg-[#18120d] text-stone-300",
+        subtlePanel: "bg-[#16120f] text-stone-300",
         divider: "bg-stone-800",
         statusBar: (empty: boolean, busy: boolean) =>
           empty
@@ -30,16 +30,16 @@ export function getThemeClasses(isDark: boolean) {
         errorBox: "border-red-900 bg-red-950/50 text-red-200",
         primaryButton: "bg-[#f0dcc0] text-[#261a11] hover:bg-[#f7e6ce]",
         disabledButton: "pointer-events-none bg-stone-800 text-stone-500",
-        pill: "border-white/14 bg-[#18120d]",
+        pill: "border-white/14 bg-[#17130f]",
         emptyState: "border-stone-700 bg-[#1b1510] text-stone-400",
-        controlShell: "border-white/14 bg-[#15110d]/88 shadow-[0_16px_36px_rgba(0,0,0,0.35)]",
+        controlShell: "border-white/14 bg-[#14100d]/92 shadow-[0_16px_36px_rgba(0,0,0,0.35)]",
         controlLabel: "text-stone-400",
-        controlSegment: "bg-[#2b2119]",
+        controlSegment: "bg-[#261f19]",
         controlButtonActive: "bg-[#f3dec0] text-[#24170f]",
         controlButtonIdle: "text-stone-300",
-        previewStage: "bg-[linear-gradient(180deg,#18120d_0%,#221a14_100%)]",
-        stat: "border-white/14 bg-[#1f1914]",
-        input: "border-stone-600 bg-[#18120d] text-stone-100 focus:border-stone-400",
+        previewStage: "bg-[linear-gradient(180deg,#16120f_0%,#1d1814_100%)]",
+        stat: "border-white/14 bg-[#1c1713]",
+        input: "border-stone-600 bg-[#17130f] text-stone-100 focus:border-stone-400",
         switchRoot: "bg-stone-700 data-[state=checked]:bg-[#f0dcc0]",
         switchThumb: "bg-white data-[state=checked]:translate-x-6",
         sliderTrack: "bg-[#3a2d24]",
