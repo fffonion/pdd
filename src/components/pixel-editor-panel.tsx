@@ -26,10 +26,12 @@ import { getThemeClasses } from "../lib/theme";
 
 type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
 export type EditorPanelMode = "edit" | "pindou";
+const EMPTY_SELECTION_LABEL = "__EMPTY__";
 
 export function PixelEditorPanel({
   t,
   isDark,
+  busy,
   cells,
   gridWidth,
   gridHeight,
@@ -80,6 +82,7 @@ export function PixelEditorPanel({
 }: {
   t: Messages;
   isDark: boolean;
+  busy: boolean;
   cells: EditableCell[];
   gridWidth: number;
   gridHeight: number;
@@ -216,6 +219,7 @@ export function PixelEditorPanel({
       <PindouModePanel
         t={t}
         isDark={isDark}
+        busy={busy}
         cells={cells}
         gridWidth={gridWidth}
         gridHeight={gridHeight}
@@ -359,6 +363,7 @@ export function PixelEditorPanel({
                 selectedHex={selectedHex}
                 onApplyCell={onApplyCell}
                 paintActiveRef={paintActiveRef}
+                busy={busy}
               />
 
               <EditResultSummary
@@ -383,6 +388,7 @@ export function PixelEditorPanel({
           <PindouModePanel
             t={t}
             isDark={isDark}
+            busy={busy}
             cells={cells}
             gridWidth={gridWidth}
             gridHeight={gridHeight}
@@ -408,6 +414,7 @@ export function PixelEditorPanel({
 function PindouModePanel({
   t,
   isDark,
+  busy,
   cells,
   gridWidth,
   gridHeight,
@@ -426,6 +433,7 @@ function PindouModePanel({
 }: {
   t: Messages;
   isDark: boolean;
+  busy: boolean;
   cells: EditableCell[];
   gridWidth: number;
   gridHeight: number;
@@ -563,6 +571,7 @@ function PindouModePanel({
         flipHorizontal={pindouFlipHorizontal}
         pindouZoom={pindouZoom}
         onPindouZoomChange={onPindouZoomChange}
+        busy={busy}
       />
 
       <div
@@ -867,12 +876,19 @@ function ContextToolStrip({
   const showZoomControls = editTool === "zoom";
   const filteredPaletteOptions = useMemo(() => {
     const query = filterText.trim().toUpperCase();
-    const source = [{ label: "H2", hex: null }, ...paletteOptions];
+    const source = [
+      { label: EMPTY_SELECTION_LABEL, displayLabel: t.emptyPixel, hex: null },
+      ...paletteOptions.map((option) => ({
+        label: option.label,
+        displayLabel: option.label,
+        hex: option.hex,
+      })),
+    ];
     if (!query) {
       return source;
     }
-    return source.filter((option) => option.label.toUpperCase().includes(query));
-  }, [filterText, paletteOptions]);
+    return source.filter((option) => option.displayLabel.toUpperCase().includes(query));
+  }, [filterText, paletteOptions, t.emptyPixel]);
 
   useEffect(() => {
     if (!pickerOpen) {
@@ -1038,6 +1054,7 @@ function ColorPickerPopup({
   setOpen: (value: boolean) => void;
 }) {
   const theme = getThemeClasses(isDark);
+  const displayLabel = selectedLabel === EMPTY_SELECTION_LABEL ? t.emptyPixel : selectedLabel;
 
   return (
     <div className="shrink-0">
@@ -1055,7 +1072,7 @@ function ColorPickerPopup({
           style={{ backgroundColor: selectedHex ?? "transparent" }}
         />
         <span className={clsx("hidden text-[11px] uppercase tracking-[0.14em] sm:inline", theme.cardMuted)}>{t.selectedColor}</span>
-        <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{selectedLabel}</span>
+        <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{displayLabel}</span>
       </button>
     </div>
   );
@@ -1076,7 +1093,7 @@ function ColorPickerPanel({
   isDark: boolean;
   selectedLabel: string;
   filterText: string;
-  options: Array<{ label: string; hex: string | null }>;
+  options: Array<{ label: string; displayLabel: string; hex: string | null }>;
   onFilterTextChange: (value: string) => void;
   onSelectLabel: (label: string) => void;
   popupRef: RefObject<HTMLDivElement | null>;
@@ -1180,6 +1197,7 @@ function EditorStage({
   onEditZoomChange,
   pindouZoom = 1,
   onPindouZoomChange,
+  busy = false,
 }: {
   cells: EditableCell[];
   gridWidth: number;
@@ -1203,16 +1221,18 @@ function EditorStage({
   onEditZoomChange?: (value: number) => void;
   pindouZoom?: number;
   onPindouZoomChange?: (value: number) => void;
+  busy?: boolean;
 }) {
   const theme = getThemeClasses(isDark);
   const stageViewportRef = useRef<HTMLDivElement | null>(null);
   const [stageViewport, setStageViewport] = useState({ width: 0, height: 0 });
   const pinchStateRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const panOffsetRef = useRef({ x: 0, y: 0 });
   const touchPanStateRef = useRef<{
     startX: number;
     startY: number;
-    startScrollLeft: number;
-    startScrollTop: number;
+    startPanX: number;
+    startPanY: number;
     moved: boolean;
     cellIndex: number | null;
   } | null>(null);
@@ -1221,13 +1241,14 @@ function EditorStage({
     pointerType: string;
     startX: number;
     startY: number;
-    startScrollLeft: number;
-    startScrollTop: number;
+    startPanX: number;
+    startPanY: number;
     moved: boolean;
     cellIndex: number | null;
   } | null>(null);
   const suppressTapUntilRef = useRef(0);
   const [isPanning, setIsPanning] = useState(false);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [cursorPreview, setCursorPreview] = useState<{ x: number; y: number; visible: boolean }>({
     x: 0,
     y: 0,
@@ -1291,6 +1312,7 @@ function EditorStage({
   const totalStageWidth = scaledStageWidth + leftGutter;
   const totalStageHeight = scaledStageHeight + topGutter;
   const showBrushCursor = stageMode === "edit" && (editTool === "paint" || editTool === "erase");
+  const showFillCursor = stageMode === "edit" && editTool === "fill";
   const showPickCursor = stageMode === "edit" && editTool === "pick";
   const brushPreviewSize = Math.max(
     18,
@@ -1299,9 +1321,22 @@ function EditorStage({
   const viewportHeightForOverflow = stageViewport.height;
   const canPanStage =
     (stageMode === "pindou" || stageMode === "edit") &&
-    (totalStageWidth > stageViewport.width + 2 || totalStageHeight > viewportHeightForOverflow + 2);
+    stageViewport.width > 0 &&
+    viewportHeightForOverflow > 0 &&
+    totalStageWidth > 0 &&
+    totalStageHeight > 0;
   const panToolActive = stageMode === "edit" && editTool === "pan";
   const zoomToolActive = stageMode === "edit" && editTool === "zoom";
+  const panLimits = useMemo(
+    () =>
+      calculateStagePanLimits(
+        totalStageWidth,
+        totalStageHeight,
+        stageViewport.width,
+        viewportHeightForOverflow,
+      ),
+    [totalStageWidth, totalStageHeight, stageViewport.width, viewportHeightForOverflow],
+  );
   const hoveredCell =
     hoveredCellIndex === null
       ? null
@@ -1310,6 +1345,14 @@ function EditorStage({
     hoveredCell?.hex ?? (isDark ? "#1C1712" : "#F7F4EE");
   const pickPreviewLabel = hoveredCell?.label ?? emptyPixelLabel;
   const pickPreviewTextColor = chooseCursorTextColor(pickPreviewHex);
+
+  useEffect(() => {
+    panOffsetRef.current = panOffset;
+  }, [panOffset]);
+
+  useEffect(() => {
+    setPanOffset((previous) => clampStagePanOffset(previous, panLimits));
+  }, [panLimits.maxX, panLimits.maxY]);
 
   useEffect(() => {
     if ((stageMode !== "pindou" && stageMode !== "edit") || !stageViewportRef.current) {
@@ -1344,8 +1387,8 @@ function EditorStage({
         touchPanStateRef.current = {
           startX: touch.clientX,
           startY: touch.clientY,
-          startScrollLeft: element.scrollLeft,
-          startScrollTop: element.scrollTop,
+          startPanX: panOffsetRef.current.x,
+          startPanY: panOffsetRef.current.y,
           moved: false,
           cellIndex: getCellIndexFromTarget(event.target),
         };
@@ -1381,8 +1424,15 @@ function EditorStage({
         }
 
         event.preventDefault();
-        element.scrollLeft = state.startScrollLeft - deltaX;
-        element.scrollTop = state.startScrollTop - deltaY;
+        setPanOffset(
+          clampStagePanOffset(
+            {
+              x: state.startPanX + deltaX,
+              y: state.startPanY + deltaY,
+            },
+            panLimits,
+          ),
+        );
         return;
       }
 
@@ -1440,7 +1490,7 @@ function EditorStage({
       element.removeEventListener("touchcancel", handleTouchEnd);
       clearTouchPan();
     };
-  }, [stageMode, canPanStage, panToolActive, pindouZoom, onPindouZoomChange, editZoom, onEditZoomChange, cells, focusedLabel, onFocusLabelChange]);
+  }, [stageMode, canPanStage, panToolActive, pindouZoom, onPindouZoomChange, editZoom, onEditZoomChange, cells, focusedLabel, onFocusLabelChange, panLimits]);
 
   useEffect(() => {
     if (
@@ -1508,8 +1558,8 @@ function EditorStage({
         pointerType: event.pointerType,
         startX: event.clientX,
         startY: event.clientY,
-        startScrollLeft: element.scrollLeft,
-        startScrollTop: element.scrollTop,
+        startPanX: panOffsetRef.current.x,
+        startPanY: panOffsetRef.current.y,
         moved: false,
         cellIndex: Number.isNaN(
           Number.parseInt(
@@ -1547,8 +1597,15 @@ function EditorStage({
         event.preventDefault();
       }
 
-      element.scrollLeft = state.startScrollLeft - deltaX;
-      element.scrollTop = state.startScrollTop - deltaY;
+      setPanOffset(
+        clampStagePanOffset(
+          {
+            x: state.startPanX + deltaX,
+            y: state.startPanY + deltaY,
+          },
+          panLimits,
+        ),
+      );
     }
 
     function handlePointerEnd(event: PointerEvent) {
@@ -1586,15 +1643,15 @@ function EditorStage({
       element.removeEventListener("pointercancel", handlePointerEnd);
       clearPan();
     };
-  }, [canPanStage, panToolActive, stageMode, cells, focusedLabel, onFocusLabelChange]);
+  }, [canPanStage, panToolActive, stageMode, cells, focusedLabel, onFocusLabelChange, panLimits]);
 
   return (
     <div
       ref={stageViewportRef}
       className={clsx(
         "relative mt-4 flex min-h-0 w-full min-w-0 max-w-full flex-1 rounded-[10px] border p-2 sm:p-3",
-        canPanStage ? "overflow-auto" : "overflow-hidden",
-        showBrushCursor || showPickCursor ? "cursor-none" : "",
+        "overflow-hidden",
+        showBrushCursor || showFillCursor || showPickCursor ? "cursor-none" : "",
         zoomToolActive ? "cursor-zoom-in" : "",
         canPanStage && (stageMode === "pindou" || panToolActive)
           ? (isPanning ? "cursor-grabbing select-none" : "cursor-grab")
@@ -1604,7 +1661,7 @@ function EditorStage({
         isDark ? "border-white/10" : "border-stone-200",
       )}
       onPointerEnter={(event) => {
-        if (!showBrushCursor && !showPickCursor) {
+        if (!showBrushCursor && !showFillCursor && !showPickCursor) {
           return;
         }
         const rect = event.currentTarget.getBoundingClientRect();
@@ -1615,7 +1672,7 @@ function EditorStage({
         });
       }}
       onPointerMove={(event) => {
-        if (!showBrushCursor && !showPickCursor) {
+        if (!showBrushCursor && !showFillCursor && !showPickCursor) {
           return;
         }
         const rect = event.currentTarget.getBoundingClientRect();
@@ -1626,7 +1683,7 @@ function EditorStage({
         });
       }}
       onPointerLeave={() => {
-        if (!showBrushCursor && !showPickCursor) {
+        if (!showBrushCursor && !showFillCursor && !showPickCursor) {
           setHoveredCellIndex(null);
           return;
         }
@@ -1640,6 +1697,7 @@ function EditorStage({
         hoveredCellIndex={hoveredCellIndex}
         isDark={isDark}
       />
+      {busy ? <StageLoadingOverlay isDark={isDark} /> : null}
       {showBrushCursor && cursorPreview.visible ? (
         <div
           className="pointer-events-none absolute z-40 flex items-center justify-center"
@@ -1652,32 +1710,52 @@ function EditorStage({
           }}
         >
           <div
-            className="flex h-full w-full items-center justify-center rounded-full border shadow-sm backdrop-blur-[1px]"
+            className="absolute inset-0 rounded-full shadow-sm"
             style={{
+              border: editTool === "erase" ? "2px dashed" : "2px solid",
               borderColor:
                 editTool === "erase"
                   ? isDark
-                    ? "rgba(255,255,255,0.85)"
-                    : "rgba(17,17,17,0.82)"
+                    ? "rgba(255,255,255,0.88)"
+                    : "rgba(17,17,17,0.84)"
                   : selectedHex ?? (isDark ? "#F7F4EE" : "#111111"),
               backgroundColor:
                 editTool === "erase"
-                  ? isDark
-                    ? "rgba(30,30,30,0.44)"
-                    : "rgba(255,255,255,0.7)"
+                  ? "transparent"
                   : selectedHex
-                    ? `${selectedHex}22`
+                    ? `${selectedHex}12`
                     : isDark
-                      ? "rgba(247,244,238,0.16)"
-                      : "rgba(17,17,17,0.08)",
+                      ? "rgba(247,244,238,0.08)"
+                      : "rgba(17,17,17,0.04)",
             }}
-          >
-            {editTool === "erase" ? (
-              <Eraser className="h-3.5 w-3.5" />
-            ) : (
-              <Pencil className="h-3.5 w-3.5" />
-            )}
-          </div>
+          />
+          <div
+            className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-sm"
+            style={{
+              backgroundColor: isDark ? "rgba(17,17,17,0.94)" : "rgba(255,255,255,0.98)",
+              borderColor:
+                editTool === "erase"
+                  ? isDark
+                    ? "rgba(255,255,255,0.94)"
+                    : "rgba(17,17,17,0.94)"
+                  : selectedHex ?? (isDark ? "#F7F4EE" : "#111111"),
+            }}
+          />
+        </div>
+      ) : null}
+      {showFillCursor && cursorPreview.visible ? (
+        <div
+          className="pointer-events-none absolute z-40"
+          style={{
+            left: `${cursorPreview.x}px`,
+            top: `${cursorPreview.y}px`,
+            transform: "translate(-18%, -88%)",
+          }}
+        >
+          <PaintBucket
+            className="h-5 w-5 drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)]"
+            style={{ color: selectedHex ?? (isDark ? "#F7F4EE" : "#111111") }}
+          />
         </div>
       ) : null}
       {showPickCursor && cursorPreview.visible ? (
@@ -1747,6 +1825,7 @@ function EditorStage({
           style={{
             width: `${totalStageWidth}px`,
             height: `${totalStageHeight}px`,
+            transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
           }}
         >
           {stageMode === "pindou" ? (
@@ -1828,7 +1907,7 @@ function EditorStage({
                     data-cell-index={index}
                     className={clsx(
                       "relative border-0 p-0",
-                      showBrushCursor || showPickCursor ? "cursor-none" : "",
+                      showBrushCursor || showFillCursor || showPickCursor ? "cursor-none" : "",
                     )}
                     style={{
                       width: `${cellSize}px`,
@@ -1911,6 +1990,39 @@ function EditorStage({
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StageLoadingOverlay({ isDark }: { isDark: boolean }) {
+  return (
+    <div
+      className={clsx(
+        "absolute inset-0 z-50 flex items-center justify-center backdrop-blur-[2px]",
+        isDark ? "bg-stone-950/42" : "bg-white/48",
+      )}
+    >
+      <div
+        className={clsx(
+          "w-[min(240px,60%)] rounded-[10px] border px-4 py-4 shadow-sm",
+          isDark ? "border-white/12 bg-stone-900/70" : "border-stone-200/90 bg-white/78",
+        )}
+      >
+        <div
+          className={clsx(
+            "relative h-2 w-full overflow-hidden rounded-full",
+            isDark ? "bg-stone-800/80" : "bg-stone-300/80",
+          )}
+        >
+          <div
+            className={clsx(
+              "absolute inset-y-0 w-1/3 rounded-full",
+              isDark ? "bg-amber-200/90" : "bg-amber-700/85",
+            )}
+            style={{ animation: "pindou-indeterminate 1.2s ease-in-out infinite" }}
+          />
         </div>
       </div>
     </div>
@@ -2397,12 +2509,16 @@ function chunkPalette<T>(items: T[], size: number) {
 }
 
 function buildHoneycombLayout(
-  options: Array<{ label: string; hex: string | null }>,
+  options: Array<{ label: string; displayLabel: string; hex: string | null }>,
   popupWidth: number,
   popupHeight: number,
 ) {
   if (!options.length) {
-    return { width: 120, height: 100, cells: [] as Array<{ sourceLabel: string; label: string; hex: string | null; points: string }> };
+    return {
+      width: 120,
+      height: 100,
+      cells: [] as Array<{ sourceLabel: string; label: string; hex: string | null; points: string }>,
+    };
   }
 
   const paddingX = 12;
@@ -2426,7 +2542,7 @@ function buildHoneycombLayout(
     const centerY = centerOffsetY + unitY * radius;
     return {
       sourceLabel: option.label,
-      label: option.label === "H2" ? "H2" : option.label,
+      label: option.displayLabel,
       hex: option.hex,
       points: buildHexagonPoints(centerX, centerY, radius),
     };
@@ -2540,6 +2656,27 @@ function calculateStageScale(
   const widthScale = availableWidth > 0 ? availableWidth / stageWidth : 1;
   const heightScale = availableHeight > 0 ? availableHeight / stageHeight : 1;
   return Math.max(0.1, Math.min(1, widthScale, heightScale));
+}
+
+function calculateStagePanLimits(
+  stageWidth: number,
+  stageHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const maxX = Math.max(0, Math.abs(stageWidth - viewportWidth) / 2 + Math.min(64, Math.max(24, viewportWidth * 0.08)));
+  const maxY = Math.max(0, Math.abs(stageHeight - viewportHeight) / 2 + Math.min(64, Math.max(24, viewportHeight * 0.08)));
+  return { maxX, maxY };
+}
+
+function clampStagePanOffset(
+  offset: { x: number; y: number },
+  limits: { maxX: number; maxY: number },
+) {
+  return {
+    x: Math.max(-limits.maxX, Math.min(limits.maxX, offset.x)),
+    y: Math.max(-limits.maxY, Math.min(limits.maxY, offset.y)),
+  };
 }
 
 function clampPindouZoom(value: number) {

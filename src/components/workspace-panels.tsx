@@ -105,6 +105,7 @@ export function WorkspacePanels({
           <PixelEditorPanel
             t={t}
             isDark={isDark}
+            busy={busy}
             cells={currentCells}
             gridWidth={result.gridWidth}
             gridHeight={result.gridHeight}
@@ -164,6 +165,7 @@ export function WorkspacePanels({
         <PixelEditorPanel
           t={t}
           isDark={isDark}
+          busy={busy}
           cells={currentCells}
           gridWidth={result.gridWidth}
           gridHeight={result.gridHeight}

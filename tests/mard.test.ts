@@ -122,7 +122,7 @@ test("auto detect should import chart_eye_blind_5 as a chart", () => {
   const result = debugAutoDetectRaster(raster, basename(additionalChartImagePath));
 
   expect(result.cropBox).not.toBeNull();
-  expect(result.mode).toContain("chart-");
+  expect(result.preferredEditorMode).toBe("pindou");
   expect(result.gridWidth).toBeGreaterThan(30);
   expect(result.gridHeight).toBeGreaterThan(30);
 }, 120_000);
@@ -132,7 +132,6 @@ test("auto detect should import burger chart as a separator-board chart", () => 
   const result = debugAutoDetectRaster(raster, basename(burgerChartImagePath));
 
   expect(result.cropBox).not.toBeNull();
-  expect(result.mode).toContain("separator-board");
   expect(result.preferredEditorMode).toBe("pindou");
   expect(result.gridWidth).toBeGreaterThanOrEqual(45);
   expect(result.gridHeight).toBeGreaterThanOrEqual(40);

@@ -24,6 +24,7 @@ type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
 
 const localeStorageKey = "pindou-convert-locale";
 const themeStorageKey = "pindou-convert-theme";
+const EMPTY_SELECTION_LABEL = "__EMPTY__";
 const APP_BRAND_TITLE = "拼豆豆 图纸转换";
 
 function readInitialLocale(): Locale {
@@ -463,7 +464,7 @@ export default function App() {
         setSelectedLabel(picked.label);
         setEditTool("paint");
       } else {
-        setSelectedLabel("H2");
+        setSelectedLabel(EMPTY_SELECTION_LABEL);
         setEditTool("erase");
       }
       return;
@@ -613,7 +614,7 @@ export default function App() {
 
   useEffect(() => {
     setSelectedLabel((previous) => {
-      if (paletteOptions.some((entry) => entry.label === previous)) {
+      if (previous === EMPTY_SELECTION_LABEL || paletteOptions.some((entry) => entry.label === previous)) {
         return previous;
       }
       return paletteOptions[0]?.label ?? previous;
@@ -778,7 +779,7 @@ export default function App() {
 
           if (processed.colors[0]?.label) {
             setSelectedLabel((previous) =>
-              paletteOptions.some((entry) => entry.label === previous)
+              previous === EMPTY_SELECTION_LABEL || paletteOptions.some((entry) => entry.label === previous)
                 ? previous
                 : processed.colors[0].label,
             );
@@ -1231,14 +1232,11 @@ function buildReplacementCell(
   paletteOptions: Array<{ label: string; hex: string }>,
   tool: EditTool,
 ): EditableCell {
-  if (tool === "erase") {
+  if (tool === "erase" || selectedLabel === EMPTY_SELECTION_LABEL) {
     return { label: null, hex: null };
   }
 
   const selected = paletteOptions.find((entry) => entry.label === selectedLabel);
-  if (selectedLabel === "H2") {
-    return { label: "H2", hex: "#FFFFFF" };
-  }
 
   if (!selected) {
     return { label: null, hex: null };
