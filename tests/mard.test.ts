@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { basename, join } from "node:path";
-import { debugAutoDetectRaster, processImageFile } from "../src/lib/mard";
+import {
+  debugAutoDetectRaster,
+  debugDetectChartBoardWithRustPrepared,
+  processImageFile,
+} from "../src/lib/mard";
 import { detectChartBoardWithRust } from "../src/lib/rust-chart-detector";
 
 const fixtureDir = join(import.meta.dir, "fixtures");
@@ -8,6 +12,8 @@ const sampleImagePath = join(fixtureDir, "bangboo_4.jpeg");
 const exportedChartImagePath = join(fixtureDir, "bangboo_2_10_chart.png");
 const additionalChartImagePath = join(fixtureDir, "chart_eye_blind_5.jpeg");
 const burgerChartImagePath = join(fixtureDir, "burger_chart.jpg");
+const xiaodouniChartImagePath = join(fixtureDir, "xiaodouni_wrong_right_4.jpeg");
+const sanduonieChartImagePath = join(fixtureDir, "sanduonie_puppet_chart.jpeg");
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_IHDR_CHUNK = "IHDR";
 const PNG_ITXT_CHUNK = "iTXt";
@@ -194,9 +200,9 @@ function injectChartMetadataChunk(bytes: Uint8Array, metadata: EmbeddedChartMeta
   ]);
 }
 
-test("auto detect should not crop bangboo _4 into a stripe", () => {
+test("auto detect should not crop bangboo _4 into a stripe", async () => {
   const raster = loadRasterWithPowerShell(sampleImagePath);
-  const result = debugAutoDetectRaster(raster, basename(sampleImagePath));
+  const result = await debugAutoDetectRaster(raster, basename(sampleImagePath));
 
   expect(result.cropBox).not.toBeNull();
 
@@ -211,11 +217,11 @@ test("auto detect should not crop bangboo _4 into a stripe", () => {
   expect(cropHeight).toBeGreaterThan(raster.height * 0.7);
 });
 
-test("auto detect should crop exported chart to the framed pixel board", () => {
+test("auto detect should crop exported chart to the framed pixel board", async () => {
   const raster = loadRasterWithPowerShell(exportedChartImagePath);
-  const result = debugAutoDetectRaster(raster, basename(exportedChartImagePath));
+  const result = await debugAutoDetectRaster(raster, basename(exportedChartImagePath));
 
-  expect(result.mode).toContain("chart-frame");
+  expect(result.mode).toBe("detected-rust-chart");
   expect(result.gridWidth).toBeGreaterThan(30);
   expect(result.gridHeight).toBeGreaterThan(30);
   expect(result.cropBox).not.toBeNull();
@@ -245,9 +251,58 @@ test("rust chart detector should detect the framed board and grid size", async (
   expect(cropHeight).toBeGreaterThan(raster.height * 0.8);
 });
 
-test("auto detect should import chart_eye_blind_5 as a chart", () => {
+test("rust chart detector should detect large separator-board chart cell counts", async () => {
+  const raster = loadRasterWithPowerShell(xiaodouniChartImagePath);
+  const result = await detectChartBoardWithRust(raster);
+
+  expect(result).not.toBeNull();
+  expect(result?.gridWidth).toBe(40);
+  expect(result?.gridHeight).toBe(34);
+
+  const cropWidth = (result?.cropBox[2] ?? 0) - (result?.cropBox[0] ?? 0);
+  const cropHeight = (result?.cropBox[3] ?? 0) - (result?.cropBox[1] ?? 0);
+  expect(cropWidth).toBeGreaterThan(raster.width * 0.9);
+  expect(cropHeight).toBeGreaterThan(raster.height * 0.68);
+});
+
+test("rust chart detector should detect separator-board burger chart", async () => {
+  const raster = loadRasterWithPowerShell(burgerChartImagePath);
+  const result = await detectChartBoardWithRust(raster);
+
+  expect(result).not.toBeNull();
+  expect(result?.gridWidth).toBeGreaterThanOrEqual(48);
+  expect(result?.gridWidth).toBeLessThanOrEqual(58);
+  expect(result?.gridHeight).toBeGreaterThanOrEqual(42);
+  expect(result?.gridHeight).toBeLessThanOrEqual(48);
+
+  const cropWidth = (result?.cropBox[2] ?? 0) - (result?.cropBox[0] ?? 0);
+  const cropHeight = (result?.cropBox[3] ?? 0) - (result?.cropBox[1] ?? 0);
+  expect(cropWidth).toBeGreaterThan(raster.width * 0.95);
+  expect(cropHeight).toBeGreaterThan(raster.height * 0.88);
+});
+
+test("rust detector guide refinement should fix sanduonie chart crop and grid", async () => {
+  const raster = loadRasterWithPowerShell(sanduonieChartImagePath);
+  const result = await debugDetectChartBoardWithRustPrepared(raster);
+
+  expect(result).not.toBeNull();
+  expect(result?.built).not.toBeNull();
+  expect(result?.built?.gridWidth).toBe(45);
+  expect(result?.built?.gridHeight).toBe(51);
+  expect(result?.built?.cropBox).not.toBeNull();
+  const [left, top, right, bottom] = result!.built!.cropBox;
+  expect(left).toBeGreaterThanOrEqual(95);
+  expect(left).toBeLessThanOrEqual(105);
+  expect(top).toBe(497);
+  expect(right).toBeGreaterThanOrEqual(2348);
+  expect(right).toBeLessThanOrEqual(2350);
+  expect(bottom).toBeGreaterThanOrEqual(2995);
+  expect(bottom).toBeLessThanOrEqual(2996);
+});
+
+test("auto detect should import chart_eye_blind_5 as a chart", async () => {
   const raster = loadRasterWithPowerShell(additionalChartImagePath);
-  const result = debugAutoDetectRaster(raster, basename(additionalChartImagePath));
+  const result = await debugAutoDetectRaster(raster, basename(additionalChartImagePath));
 
   expect(result.cropBox).not.toBeNull();
   expect(result.preferredEditorMode).toBe("pindou");
@@ -255,9 +310,9 @@ test("auto detect should import chart_eye_blind_5 as a chart", () => {
   expect(result.gridHeight).toBeGreaterThan(30);
 }, 120_000);
 
-test("auto detect should import burger chart as a separator-board chart", () => {
+test("auto detect should import burger chart as a separator-board chart", async () => {
   const raster = loadRasterWithPowerShell(burgerChartImagePath);
-  const result = debugAutoDetectRaster(raster, basename(burgerChartImagePath));
+  const result = await debugAutoDetectRaster(raster, basename(burgerChartImagePath));
 
   expect(result.cropBox).not.toBeNull();
   expect(result.preferredEditorMode).toBe("pindou");

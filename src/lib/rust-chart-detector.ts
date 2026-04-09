@@ -3,6 +3,7 @@ interface RustDetectorExports {
   alloc(size: number): number;
   dealloc(ptr: number, size: number): void;
   detect_chart(ptr: number, len: number, width: number, height: number): number;
+  detect_pixel_art(ptr: number, len: number, width: number, height: number): number;
   result_ptr(): number;
 }
 
@@ -18,12 +19,64 @@ export interface RustChartDetection {
   gridHeight: number;
 }
 
+export interface RustPixelDetection {
+  cropBox: [number, number, number, number];
+  gridWidth: number;
+  gridHeight: number;
+}
+
+export interface RustAutoDetection {
+  kind: "chart" | "pixel";
+  cropBox: [number, number, number, number];
+  gridWidth: number;
+  gridHeight: number;
+}
+
 const wasmUrl = new URL("./rust-chart-detector.wasm", import.meta.url);
 let detectorPromise: Promise<RustDetectorExports | null> | null = null;
 
 export async function detectChartBoardWithRust(
   raster: RasterImageLike,
 ): Promise<RustChartDetection | null> {
+  return await detectWithRust(raster, "detect_chart");
+}
+
+export async function detectPixelArtWithRust(
+  raster: RasterImageLike,
+): Promise<RustPixelDetection | null> {
+  return await detectWithRust(raster, "detect_pixel_art");
+}
+
+export async function detectAutoRasterWithRust(
+  raster: RasterImageLike,
+): Promise<RustAutoDetection | null> {
+  const chart = await detectChartBoardWithRust(raster);
+  if (chart) {
+    return {
+      kind: "chart",
+      cropBox: chart.cropBox,
+      gridWidth: chart.gridWidth,
+      gridHeight: chart.gridHeight,
+    };
+  }
+
+  const pixel = await detectPixelArtWithRust(raster);
+  if (!pixel) {
+    return null;
+  }
+
+  return {
+    kind: "pixel",
+    cropBox: pixel.cropBox,
+    gridWidth: pixel.gridWidth,
+    gridHeight: pixel.gridHeight,
+  };
+}
+
+async function detectWithRust(
+  raster: RasterImageLike,
+  methodName: "detect_chart" | "detect_pixel_art",
+) {
   const exports = await loadRustDetector();
   if (!exports) {
     return null;
@@ -33,7 +86,7 @@ export async function detectChartBoardWithRust(
   const pointer = exports.alloc(length);
   try {
     new Uint8Array(exports.memory.buffer, pointer, length).set(raster.data);
-    const found = exports.detect_chart(pointer, length, raster.width, raster.height);
+    const found = exports[methodName](pointer, length, raster.width, raster.height);
     if (!found) {
       return null;
     }
@@ -61,7 +114,7 @@ export async function detectChartBoardWithRust(
     }
 
     return {
-      cropBox: [left, top, right, bottom],
+      cropBox: [left, top, right, bottom] as [number, number, number, number],
       gridWidth,
       gridHeight,
     };
