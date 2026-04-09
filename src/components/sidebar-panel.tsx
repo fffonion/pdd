@@ -13,6 +13,7 @@ export function SidebarPanel({
   t,
   file,
   inputUrl,
+  sourceBadge,
   cropMode,
   onCropModeChange,
   cropRect,
@@ -41,6 +42,7 @@ export function SidebarPanel({
   t: Messages;
   file: File | null;
   inputUrl: string | null;
+  sourceBadge: { kind: "chart" | "pixel-art"; label: string } | null;
   cropMode: boolean;
   onCropModeChange: (enabled: boolean) => void;
   cropRect: NormalizedCropRect | null;
@@ -99,6 +101,7 @@ export function SidebarPanel({
           emptyText={t.sourceEmpty}
           sourceChooseImage={t.sourceChooseImage}
           sourceStayInTab={t.sourceStayInTab}
+          sourceBadge={sourceBadge}
           onFileSelection={onFileSelection}
           cropReset={t.cropReset}
           cropEdit={t.cropEdit}

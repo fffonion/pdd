@@ -6,6 +6,7 @@ import { LanguageSwitch, ThemeSwitch } from "./components/controls";
 import { SidebarPanel } from "./components/sidebar-panel";
 import { WorkspacePanels } from "./components/workspace-panels";
 import { defaultLocale, getMessages, type Locale } from "./lib/i18n";
+import type { PindouBeadShape, PindouBoardTheme } from "./lib/pindou-board-theme";
 import {
   exportChartFromCells,
   getPaletteOptions,
@@ -25,7 +26,7 @@ type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
 const localeStorageKey = "pindou-convert-locale";
 const themeStorageKey = "pindou-convert-theme";
 const EMPTY_SELECTION_LABEL = "__EMPTY__";
-const APP_BRAND_TITLE = "拼豆豆 图纸转换";
+const APP_BRAND_TITLE = "拼豆豆";
 const APP_BRAND_TITLE_MOBILE = "拼豆豆";
 
 function readInitialLocale(): Locale {
@@ -46,25 +47,6 @@ function readInitialThemeMode(): ThemeMode {
   return stored === "light" || stored === "dark" || stored === "system"
     ? stored
     : "system";
-}
-
-function getHeaderStatusLabel(options: {
-  file: File | null;
-  busy: boolean;
-  resultReady: boolean;
-  processingLabel: string;
-  updatedLabel: string;
-}) {
-  if (!options.file) {
-    return null;
-  }
-  if (options.busy) {
-    return options.processingLabel;
-  }
-  if (options.resultReady) {
-    return options.updatedLabel;
-  }
-  return null;
 }
 
 function isTypingElement(target: EventTarget | null) {
@@ -128,7 +110,13 @@ export default function App() {
   const [pindouFocusViewOpen, setPindouFocusViewOpen] = useState(false);
   const [editorPanelMode, setEditorPanelMode] = useState<EditorPanelMode>("edit");
   const [pindouFlipHorizontal, setPindouFlipHorizontal] = useState(false);
+  const [pindouShowLabels, setPindouShowLabels] = useState(false);
+  const [pindouBeadShape, setPindouBeadShape] = useState<PindouBeadShape>("square");
+  const [pindouBoardTheme, setPindouBoardTheme] = useState<PindouBoardTheme>("gray");
   const [pindouZoom, setPindouZoom] = useState(1);
+  const [pindouTimerRunning, setPindouTimerRunning] = useState(false);
+  const [pindouTimerElapsedMs, setPindouTimerElapsedMs] = useState(0);
+  const pindouTimerStartedAtRef = useRef<number | null>(null);
 
   const paletteOptions = getPaletteOptions(colorSystemId);
   const [selectedLabel, setSelectedLabel] = useState<string>(paletteOptions[0]?.label ?? "A1");
@@ -142,6 +130,12 @@ export default function App() {
     cropMode ? cropRect : null,
     result?.detectedCropRect ?? null,
   );
+  const sourceBadge =
+    result?.preferredEditorMode === "pindou"
+      ? { kind: "chart" as const, label: t.sourceChartBadge }
+      : result && result.detectionMode !== "converted-from-image"
+        ? { kind: "pixel-art" as const, label: t.sourcePixelArtBadge }
+        : null;
   const editorBaseCells =
     editorDraftCells ??
     (editorHistoryIndex >= 0 ? editorHistory[editorHistoryIndex] ?? [] : result?.cells ?? []);
@@ -160,13 +154,6 @@ export default function App() {
     baseMatchedColors,
     disabledResultLabels,
   );
-  const headerStatusLabel = getHeaderStatusLabel({
-    file,
-    busy,
-    resultReady: Boolean(result),
-    processingLabel: t.processing,
-    updatedLabel: t.generateChart,
-  });
 
   useEffect(() => {
     disabledResultLabelsRef.current = disabledResultLabels;
@@ -238,7 +225,13 @@ export default function App() {
     setEditorPanelMode("edit");
     setEditFlipHorizontal(false);
     setPindouFlipHorizontal(false);
+    setPindouShowLabels(false);
+    setPindouBeadShape("square");
+    setPindouBoardTheme("gray");
     setPindouZoom(1);
+    setPindouTimerRunning(false);
+    setPindouTimerElapsedMs(0);
+    pindouTimerStartedAtRef.current = null;
     setEditTool("pan");
     setEditZoom(1);
     setDisabledResultLabels([]);
@@ -580,6 +573,55 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!pindouTimerRunning) {
+      return;
+    }
+
+    pindouTimerStartedAtRef.current = Date.now();
+    const intervalId = window.setInterval(() => {
+      setPindouTimerElapsedMs((previous) => {
+        const startedAt = pindouTimerStartedAtRef.current;
+        if (!startedAt) {
+          return previous;
+        }
+        const now = Date.now();
+        pindouTimerStartedAtRef.current = now;
+        return previous + (now - startedAt);
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+      const startedAt = pindouTimerStartedAtRef.current;
+      if (startedAt) {
+        setPindouTimerElapsedMs((previous) => previous + Math.max(0, Date.now() - startedAt));
+        pindouTimerStartedAtRef.current = null;
+      }
+    };
+  }, [pindouTimerRunning]);
+
+  function handlePindouTimerToggle() {
+    if (pindouTimerRunning) {
+      const startedAt = pindouTimerStartedAtRef.current;
+      if (startedAt) {
+        setPindouTimerElapsedMs((previous) => previous + Math.max(0, Date.now() - startedAt));
+      }
+      pindouTimerStartedAtRef.current = null;
+      setPindouTimerRunning(false);
+      return;
+    }
+
+    pindouTimerStartedAtRef.current = Date.now();
+    setPindouTimerRunning(true);
+  }
+
+  function handlePindouTimerReset() {
+    pindouTimerStartedAtRef.current = null;
+    setPindouTimerRunning(false);
+    setPindouTimerElapsedMs(0);
+  }
+
+  useEffect(() => {
     const handlePointerUp = () => {
       const shouldFinalize = paintActiveRef.current;
       paintActiveRef.current = false;
@@ -787,6 +829,9 @@ export default function App() {
 
           const url = URL.createObjectURL(processed.blob);
           setDisabledResultLabels([]);
+          if (processed.colorSystemId !== colorSystemId) {
+            setColorSystemId(processed.colorSystemId);
+          }
           setEditorPanelMode(processed.preferredEditorMode);
           startTransition(() => {
             setResult((previous) => {
@@ -799,8 +844,9 @@ export default function App() {
           resetEditorHistory(processed.cells);
 
           if (processed.colors[0]?.label) {
+            const processedPaletteOptions = getPaletteOptions(processed.colorSystemId);
             setSelectedLabel((previous) =>
-              previous === EMPTY_SELECTION_LABEL || paletteOptions.some((entry) => entry.label === previous)
+              previous === EMPTY_SELECTION_LABEL || processedPaletteOptions.some((entry) => entry.label === previous)
                 ? previous
                 : processed.colors[0].label,
             );
@@ -911,6 +957,16 @@ export default function App() {
             onPreferredEditorModeChange={setEditorPanelMode}
             pindouFlipHorizontal={pindouFlipHorizontal}
             onPindouFlipHorizontalChange={setPindouFlipHorizontal}
+            pindouShowLabels={pindouShowLabels}
+            onPindouShowLabelsChange={setPindouShowLabels}
+            pindouBeadShape={pindouBeadShape}
+            onPindouBeadShapeChange={setPindouBeadShape}
+            pindouBoardTheme={pindouBoardTheme}
+            onPindouBoardThemeChange={setPindouBoardTheme}
+            pindouTimerElapsedMs={pindouTimerElapsedMs}
+            pindouTimerRunning={pindouTimerRunning}
+            onPindouTimerToggle={handlePindouTimerToggle}
+            onPindouTimerReset={handlePindouTimerReset}
             pindouZoom={pindouZoom}
             onPindouZoomChange={setPindouZoom}
           />
@@ -931,11 +987,6 @@ export default function App() {
               <span className="sm:hidden">{APP_BRAND_TITLE_MOBILE}</span>
               <span className="hidden sm:inline">{APP_BRAND_TITLE}</span>
             </h1>
-            {headerStatusLabel ? (
-              <div className={clsx("hidden shrink-0 rounded-[8px] px-3 py-1 text-xs font-semibold sm:block", theme.statusBar(busy, false))}>
-                {headerStatusLabel}
-              </div>
-            ) : null}
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <ThemeSwitch
@@ -1001,6 +1052,7 @@ export default function App() {
             t={t}
             file={file}
             inputUrl={inputUrl}
+            sourceBadge={sourceBadge}
             cropMode={cropMode}
             onCropModeChange={setCropMode}
             cropRect={cropRect}
@@ -1071,6 +1123,16 @@ export default function App() {
             onPreferredEditorModeChange={setEditorPanelMode}
             pindouFlipHorizontal={pindouFlipHorizontal}
             onPindouFlipHorizontalChange={setPindouFlipHorizontal}
+            pindouShowLabels={pindouShowLabels}
+            onPindouShowLabelsChange={setPindouShowLabels}
+            pindouBeadShape={pindouBeadShape}
+            onPindouBeadShapeChange={setPindouBeadShape}
+            pindouBoardTheme={pindouBoardTheme}
+            onPindouBoardThemeChange={setPindouBoardTheme}
+            pindouTimerElapsedMs={pindouTimerElapsedMs}
+            pindouTimerRunning={pindouTimerRunning}
+            onPindouTimerToggle={handlePindouTimerToggle}
+            onPindouTimerReset={handlePindouTimerReset}
             pindouZoom={pindouZoom}
             onPindouZoomChange={setPindouZoom}
           />

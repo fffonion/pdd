@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { PaintBucket, Pipette } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditableCell, NormalizedCropRect } from "../lib/mard";
+import { getPindouBoardThemeShades, type PindouBeadShape, type PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 
 type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
@@ -26,6 +27,9 @@ export function CanvasEditorStage({
   paintActiveRef,
   focusOnly = false,
   flipHorizontal = false,
+  showPindouLabels = false,
+  pindouBeadShape = "square",
+  pindouBoardTheme = "gray",
   editZoom = 1,
   onEditZoomChange,
   pindouZoom = 1,
@@ -52,6 +56,9 @@ export function CanvasEditorStage({
   paintActiveRef: MutableRefObject<boolean>;
   focusOnly?: boolean;
   flipHorizontal?: boolean;
+  showPindouLabels?: boolean;
+  pindouBeadShape?: PindouBeadShape;
+  pindouBoardTheme?: PindouBoardTheme;
   editZoom?: number;
   onEditZoomChange?: (value: number) => void;
   pindouZoom?: number;
@@ -541,8 +548,22 @@ export function CanvasEditorStage({
     const boardY = topGutter;
     const boardWidth = scaledStageWidth;
     const boardHeight = scaledStageHeight;
-    context.fillStyle = isDark ? "#3a3128" : "#c9c4bc";
-    context.fillRect(boardX, boardY, boardWidth, boardHeight);
+    if (stageMode === "pindou") {
+      drawPindouBoardPattern(
+        context,
+        boardX,
+        boardY,
+        gridWidth,
+        gridHeight,
+        stagePitch,
+        scaledCellSize,
+        scaledGap,
+        pindouBoardTheme,
+      );
+    } else {
+      context.fillStyle = isDark ? "#3a3128" : "#c9c4bc";
+      context.fillRect(boardX, boardY, boardWidth, boardHeight);
+    }
 
     context.save();
     context.beginPath();
@@ -556,21 +577,28 @@ export function CanvasEditorStage({
         const displayColumn = flipHorizontal ? gridWidth - 1 - column : column;
         const x = boardX + displayColumn * stagePitch;
         const y = boardY + row * stagePitch;
-        context.fillStyle = getStageCellBackgroundColor(cell, stageMode, focusedLabel, isDark);
-        context.fillRect(x, y, scaledCellSize, scaledCellSize);
-
-        if (stageMode === "pindou" && focusedLabel && cell.label === focusedLabel) {
-          context.lineWidth = Math.max(1.5, scaledCellSize * 0.08);
-          context.strokeStyle = isDark ? "rgba(255,255,255,0.92)" : "rgba(17,17,17,0.84)";
-          context.strokeRect(
-            x + context.lineWidth / 2,
-            y + context.lineWidth / 2,
-            Math.max(0, scaledCellSize - context.lineWidth),
-            Math.max(0, scaledCellSize - context.lineWidth),
+        const cellBackground = getStageCellBackgroundColor(cell, stageMode, focusedLabel, isDark);
+        if (stageMode === "pindou") {
+          drawPindouBead(
+            context,
+            x,
+            y,
+            scaledCellSize,
+            cellBackground,
+            isDark,
+            pindouBeadShape,
+            !cell.label,
           );
+        } else {
+          context.fillStyle = cellBackground;
+          context.fillRect(x, y, scaledCellSize, scaledCellSize);
         }
 
-        if (!shouldShowStageCellLabel(cell, stageMode, focusedLabel, scaledCellSize)) {
+        if (stageMode === "pindou" && focusedLabel && cell.label === focusedLabel) {
+          drawPindouBeadFocusRing(context, x, y, scaledCellSize, isDark, pindouBeadShape);
+        }
+
+        if (!shouldShowStageCellLabel(cell, stageMode, focusedLabel, showPindouLabels)) {
           continue;
         }
 
@@ -606,7 +634,7 @@ export function CanvasEditorStage({
     if (stageMode === "pindou") {
       drawCanvasAxisLabels(context, boardX, boardY, gridWidth, gridHeight, stageScale, axisGutter, scaledStageWidth, scaledStageHeight);
     }
-  }, [cells, gridWidth, gridHeight, totalStageWidth, totalStageHeight, leftGutter, topGutter, scaledStageWidth, scaledStageHeight, scaledCellSize, scaledGap, stagePitch, stageScale, stageMode, focusedLabel, isDark, overlayEnabled, overlayImage, overlayCropRect, flipHorizontal, axisGutter]);
+  }, [cells, gridWidth, gridHeight, totalStageWidth, totalStageHeight, leftGutter, topGutter, scaledStageWidth, scaledStageHeight, scaledCellSize, scaledGap, stagePitch, stageScale, stageMode, focusedLabel, isDark, overlayEnabled, overlayImage, overlayCropRect, flipHorizontal, axisGutter, showPindouLabels, pindouBeadShape, pindouBoardTheme]);
 
   function updateHoveredState(event: ReactPointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -643,7 +671,9 @@ export function CanvasEditorStage({
         canPanStage && (stageMode === "pindou" || effectivePanActive)
           ? isPanning
             ? "cursor-grabbing select-none"
-            : "cursor-grab"
+            : stageMode === "pindou"
+              ? "cursor-default"
+              : "cursor-grab"
           : "",
         theme.previewStage,
         isDark ? "border-white/10" : "border-stone-200",
@@ -922,7 +952,7 @@ function CanvasStatusBadge({
         theme.cardMuted,
       )}
     >
-      {gridWidth} x {gridHeight} 路 {hoveredX}, {hoveredY}
+      {gridWidth} x {gridHeight} {hoveredX}, {hoveredY}
     </div>
   );
 }
@@ -980,11 +1010,14 @@ function drawCanvasGuideLines(
   scaledGap: number,
 ) {
   context.save();
-  context.lineWidth = 1.5;
-  context.strokeStyle = "#000000";
+  const majorLineWidth = 1.3;
+  const minorLineWidth = 1.1;
   for (let index = 5; index < gridWidth; index += 5) {
     context.beginPath();
-    context.setLineDash(index % 10 === 0 ? [] : [7, 4]);
+    const isMajorLine = index % 10 === 0;
+    context.lineWidth = isMajorLine ? majorLineWidth : minorLineWidth;
+    context.strokeStyle = isMajorLine ? "#000000" : "rgba(0, 0, 0, 0.5)";
+    context.setLineDash(isMajorLine ? [] : [4, 6]);
     const x = boardX + index * stagePitch - scaledGap / 2;
     context.moveTo(x, boardY);
     context.lineTo(x, boardY + boardHeight);
@@ -992,7 +1025,10 @@ function drawCanvasGuideLines(
   }
   for (let index = 5; index < gridHeight; index += 5) {
     context.beginPath();
-    context.setLineDash(index % 10 === 0 ? [] : [7, 4]);
+    const isMajorLine = index % 10 === 0;
+    context.lineWidth = isMajorLine ? majorLineWidth : minorLineWidth;
+    context.strokeStyle = isMajorLine ? "#000000" : "rgba(0, 0, 0, 0.5)";
+    context.setLineDash(isMajorLine ? [] : [4, 6]);
     const y = boardY + index * stagePitch - scaledGap / 2;
     context.moveTo(boardX, y);
     context.lineTo(boardX + boardWidth, y);
@@ -1030,6 +1066,127 @@ function drawCanvasAxisLabels(
     const position = ((label.index + 0.5) / gridHeight) * boardHeight;
     context.fillText(String(label.value), boardX - gutter * 0.38, boardY + position);
   }
+  context.restore();
+}
+
+function drawPindouBoardPattern(
+  context: CanvasRenderingContext2D,
+  boardX: number,
+  boardY: number,
+  gridWidth: number,
+  gridHeight: number,
+  stagePitch: number,
+  scaledCellSize: number,
+  scaledGap: number,
+  boardTheme: PindouBoardTheme,
+) {
+  const shades = getPindouBoardThemeShades(boardTheme);
+  const pattern = [
+    [0, 1, 1, 0],
+    [1, 2, 2, 1],
+    [1, 2, 2, 1],
+    [0, 1, 1, 0],
+  ] as const;
+  const blockSpan = 5;
+  const totalWidth = gridWidth > 0 ? gridWidth * stagePitch - scaledGap : scaledCellSize;
+  const totalHeight = gridHeight > 0 ? gridHeight * stagePitch - scaledGap : scaledCellSize;
+
+  context.fillStyle = shades[1];
+  context.fillRect(boardX, boardY, totalWidth, totalHeight);
+
+  for (let blockRow = 0; blockRow * blockSpan < gridHeight; blockRow += 1) {
+    for (let blockColumn = 0; blockColumn * blockSpan < gridWidth; blockColumn += 1) {
+      const startColumn = blockColumn * blockSpan;
+      const startRow = blockRow * blockSpan;
+      const endColumn = Math.min(gridWidth, startColumn + blockSpan);
+      const endRow = Math.min(gridHeight, startRow + blockSpan);
+      const x = boardX + startColumn * stagePitch;
+      const y = boardY + startRow * stagePitch;
+      const width = (endColumn - startColumn) * stagePitch - scaledGap;
+      const height = (endRow - startRow) * stagePitch - scaledGap;
+      const toneIndex = pattern[blockRow % 4][blockColumn % 4];
+
+      context.fillStyle = shades[toneIndex];
+      context.fillRect(x, y, width, height);
+    }
+  }
+}
+
+function drawPindouBead(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  fillColor: string,
+  isDark: boolean,
+  beadShape: PindouBeadShape,
+  isEmpty: boolean,
+) {
+  context.save();
+  if (isEmpty) {
+    const radius = Math.max(0.9, size * 0.13);
+    const centerX = x + size / 2;
+    const centerY = y + size / 2;
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    context.fillStyle = isDark ? "rgba(255,255,255,0.18)" : "rgba(17,17,17,0.14)";
+    context.fill();
+    context.lineWidth = Math.max(0.6, size * 0.025);
+    context.strokeStyle = isDark ? "rgba(255,255,255,0.24)" : "rgba(17,17,17,0.18)";
+    context.stroke();
+    context.restore();
+    return;
+  }
+
+  context.fillStyle = fillColor;
+  context.lineWidth = Math.max(0.8, size * 0.04);
+  context.strokeStyle = isDark ? "rgba(255,255,255,0.12)" : "rgba(17,17,17,0.08)";
+
+  if (beadShape === "circle") {
+    const inset = Math.max(0.25, size * 0.04);
+    const radius = Math.max(1, (size - inset * 2) / 2);
+    const centerX = x + size / 2;
+    const centerY = y + size / 2;
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+  } else {
+    const inset = Math.max(0.4, size * 0.035);
+    const length = Math.max(1, size - inset * 2);
+    context.fillRect(x + inset, y + inset, length, length);
+    context.strokeRect(x + inset, y + inset, length, length);
+  }
+
+  context.restore();
+}
+
+function drawPindouBeadFocusRing(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  isDark: boolean,
+  beadShape: PindouBeadShape,
+) {
+  context.save();
+  context.lineWidth = Math.max(1.5, size * 0.08);
+  context.strokeStyle = isDark ? "rgba(255,255,255,0.92)" : "rgba(17,17,17,0.84)";
+
+  if (beadShape === "circle") {
+    const inset = Math.max(0.2, size * 0.018);
+    const radius = Math.max(1, (size - inset * 2) / 2);
+    const centerX = x + size / 2;
+    const centerY = y + size / 2;
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    context.stroke();
+  } else {
+    const inset = Math.max(0.3, size * 0.02);
+    const length = Math.max(1, size - inset * 2);
+    context.strokeRect(x + inset, y + inset, length, length);
+  }
+
   context.restore();
 }
 
@@ -1116,15 +1273,9 @@ function shouldShowStageCellLabel(
   cell: EditableCell,
   stageMode: EditorPanelMode,
   focusedLabel: string | null | undefined,
-  cellSize: number,
+  showPindouLabels: boolean,
 ) {
-  if (stageMode === "edit" || !cell.label) {
-    return false;
-  }
-
-  const minimumReadableCellSize = Math.max(16, cell.label.length * 5 + 6);
-  const estimatedFontSize = Math.max(5, Math.min(10, Math.round(cellSize * 0.22)));
-  if (cellSize < minimumReadableCellSize || estimatedFontSize < 8) {
+  if (stageMode === "edit" || !cell.label || !showPindouLabels) {
     return false;
   }
 

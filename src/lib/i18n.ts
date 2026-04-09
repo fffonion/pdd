@@ -17,6 +17,8 @@ export interface Messages {
   sourceLocalOnly: string;
   sourceChooseImage: string;
   sourceStayInTab: string;
+  sourceChartBadge: string;
+  sourcePixelArtBadge: string;
   gridTitle: string;
   gridSubtitle: string;
   colorSystemTitle: string;
@@ -56,6 +58,19 @@ export interface Messages {
   editorTabPindou: string;
   pindouModeHint: string;
   pindouFlipHorizontal?: string;
+  pindouBeadShapeLabel?: string;
+  pindouBeadShapeSquare?: string;
+  pindouBeadShapeCircle?: string;
+  pindouBoardThemeLabel?: string;
+  pindouBoardThemeNone?: string;
+  pindouBoardThemeGray?: string;
+  pindouBoardThemeGreen?: string;
+  pindouBoardThemePink?: string;
+  pindouBoardThemeBlue?: string;
+  pindouShowLabels?: string;
+  pindouTimerStart?: string;
+  pindouTimerPause?: string;
+  pindouTimerReset?: string;
   pindouFocusView: string;
   pindouExitFocus: string;
   toolLabel: string;
@@ -120,6 +135,8 @@ export const messages: Record<Locale, Messages> = {
     sourceLocalOnly: "本地图片",
     sourceChooseImage: "选择图片",
     sourceStayInTab: "选择图片后会自动生成图纸，也可以导入现有图纸",
+    sourceChartBadge: "图纸",
+    sourcePixelArtBadge: "像素图",
     gridTitle: "网格策略",
     gridSubtitle: "自动识别像素画，或手动指定网格后先像素化。",
     colorSystemTitle: "色系",
@@ -159,6 +176,15 @@ export const messages: Record<Locale, Messages> = {
     editorTabPindou: "拼豆模式",
     pindouModeHint: "点击底部颜色或图纸格子，可单独高亮一种颜色。",
     pindouFlipHorizontal: "水平翻转",
+    pindouBeadShapeLabel: "豆子形状",
+    pindouBeadShapeSquare: "方块",
+    pindouBeadShapeCircle: "圆圈",
+    pindouBoardThemeLabel: "底纹",
+    pindouBoardThemeNone: "无底纹",
+    pindouBoardThemeGray: "灰色系",
+    pindouBoardThemeGreen: "绿色系",
+    pindouBoardThemePink: "粉色系",
+    pindouBoardThemeBlue: "蓝色系",
     pindouFocusView: "专注查看图纸",
     pindouExitFocus: "退出专注查看",
     toolLabel: "工具",
@@ -225,6 +251,8 @@ export const messages: Record<Locale, Messages> = {
     sourceLocalOnly: "Local image",
     sourceChooseImage: "Choose an image",
     sourceStayInTab: "A chart will be generated automatically after import, or you can import an existing chart",
+    sourceChartBadge: "Chart",
+    sourcePixelArtBadge: "Pixel Art",
     gridTitle: "Grid Strategy",
     gridSubtitle: "Auto-detect pixel art, or provide a manual grid and pixelate first.",
     colorSystemTitle: "Color System",
@@ -264,6 +292,15 @@ export const messages: Record<Locale, Messages> = {
     editorTabPindou: "Pindou Mode",
     pindouModeHint: "Click a color or a grid cell to highlight just that color.",
     pindouFlipHorizontal: "Flip Horizontally",
+    pindouBeadShapeLabel: "Bead Shape",
+    pindouBeadShapeSquare: "Square",
+    pindouBeadShapeCircle: "Circle",
+    pindouBoardThemeLabel: "Board Theme",
+    pindouBoardThemeNone: "None",
+    pindouBoardThemeGray: "Gray",
+    pindouBoardThemeGreen: "Green",
+    pindouBoardThemePink: "Pink",
+    pindouBoardThemeBlue: "Blue",
     pindouFocusView: "Focus on sketch",
     pindouExitFocus: "Exit focus view",
     toolLabel: "Tool",

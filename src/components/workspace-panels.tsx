@@ -2,6 +2,7 @@ import clsx from "clsx";
 import type { MutableRefObject } from "react";
 import type { Messages } from "../lib/i18n";
 import type { NormalizedCropRect, ProcessResult } from "../lib/mard";
+import type { PindouBeadShape, PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 import { PixelEditorPanel, type EditorPanelMode } from "./pixel-editor-panel";
 
@@ -50,6 +51,16 @@ export function WorkspacePanels({
   onPreferredEditorModeChange,
   pindouFlipHorizontal,
   onPindouFlipHorizontalChange,
+  pindouShowLabels,
+  onPindouShowLabelsChange,
+  pindouBeadShape,
+  onPindouBeadShapeChange,
+  pindouBoardTheme,
+  onPindouBoardThemeChange,
+  pindouTimerElapsedMs,
+  pindouTimerRunning,
+  onPindouTimerToggle,
+  onPindouTimerReset,
   pindouZoom,
   onPindouZoomChange,
 }: {
@@ -97,6 +108,16 @@ export function WorkspacePanels({
   onPreferredEditorModeChange?: (mode: EditorPanelMode) => void;
   pindouFlipHorizontal: boolean;
   onPindouFlipHorizontalChange: (value: boolean) => void;
+  pindouShowLabels: boolean;
+  onPindouShowLabelsChange: (value: boolean) => void;
+  pindouBeadShape: PindouBeadShape;
+  onPindouBeadShapeChange: (value: PindouBeadShape) => void;
+  pindouBoardTheme: PindouBoardTheme;
+  onPindouBoardThemeChange: (value: PindouBoardTheme) => void;
+  pindouTimerElapsedMs: number;
+  pindouTimerRunning: boolean;
+  onPindouTimerToggle: () => void;
+  onPindouTimerReset: () => void;
   pindouZoom: number;
   onPindouZoomChange: (value: number) => void;
 }) {
@@ -157,6 +178,16 @@ export function WorkspacePanels({
             onReplaceMatchedColor={onReplaceMatchedColor}
             pindouFlipHorizontal={pindouFlipHorizontal}
             onPindouFlipHorizontalChange={onPindouFlipHorizontalChange}
+            pindouShowLabels={pindouShowLabels}
+            onPindouShowLabelsChange={onPindouShowLabelsChange}
+            pindouBeadShape={pindouBeadShape}
+            onPindouBeadShapeChange={onPindouBeadShapeChange}
+            pindouBoardTheme={pindouBoardTheme}
+            onPindouBoardThemeChange={onPindouBoardThemeChange}
+            pindouTimerElapsedMs={pindouTimerElapsedMs}
+            pindouTimerRunning={pindouTimerRunning}
+            onPindouTimerToggle={onPindouTimerToggle}
+            onPindouTimerReset={onPindouTimerReset}
             pindouZoom={pindouZoom}
             onPindouZoomChange={onPindouZoomChange}
           />
@@ -218,6 +249,16 @@ export function WorkspacePanels({
           onReplaceMatchedColor={onReplaceMatchedColor}
           pindouFlipHorizontal={pindouFlipHorizontal}
           onPindouFlipHorizontalChange={onPindouFlipHorizontalChange}
+          pindouShowLabels={pindouShowLabels}
+          onPindouShowLabelsChange={onPindouShowLabelsChange}
+          pindouBeadShape={pindouBeadShape}
+          onPindouBeadShapeChange={onPindouBeadShapeChange}
+          pindouBoardTheme={pindouBoardTheme}
+          onPindouBoardThemeChange={onPindouBoardThemeChange}
+          pindouTimerElapsedMs={pindouTimerElapsedMs}
+          pindouTimerRunning={pindouTimerRunning}
+          onPindouTimerToggle={onPindouTimerToggle}
+          onPindouTimerReset={onPindouTimerReset}
           pindouZoom={pindouZoom}
           onPindouZoomChange={onPindouZoomChange}
         />

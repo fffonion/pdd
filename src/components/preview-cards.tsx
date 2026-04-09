@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ChevronDown, Crop, ImageUp, RotateCcw } from "lucide-react";
+import { ChevronDown, Crop, FileImage, ImageUp, LayoutGrid, RotateCcw } from "lucide-react";
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { NormalizedCropRect } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
@@ -30,6 +30,7 @@ export function OriginalPreviewCard({
   emptyText,
   sourceChooseImage,
   sourceStayInTab,
+  sourceBadge,
   onFileSelection,
   cropReset,
   cropEdit,
@@ -49,6 +50,7 @@ export function OriginalPreviewCard({
   emptyText: string;
   sourceChooseImage: string;
   sourceStayInTab: string;
+  sourceBadge?: { kind: "chart" | "pixel-art"; label: string } | null;
   onFileSelection: (file: File | null) => void;
   cropReset: string;
   cropEdit: string;
@@ -197,8 +199,23 @@ export function OriginalPreviewCard({
     <section className={clsx("rounded-[14px] border p-4 backdrop-blur transition-colors sm:rounded-[16px] sm:p-5 xl:rounded-[18px]", theme.panel)}>
       <div className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
             <p className={clsx("text-sm font-semibold", theme.cardTitle)}>{title}</p>
+            {sourceBadge ? (
+              <div
+                className={clsx(
+                  "flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold shadow-sm",
+                  theme.pill,
+                )}
+              >
+                {sourceBadge.kind === "chart" ? (
+                  <FileImage aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <LayoutGrid aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+                <span>{sourceBadge.label}</span>
+              </div>
+            ) : null}
           </div>
           <div className="flex shrink-0 gap-2">
             <button
