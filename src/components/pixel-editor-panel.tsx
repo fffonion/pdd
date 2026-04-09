@@ -20,6 +20,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
+import { CanvasEditorStage } from "./canvas-editor-stage";
 import type { Messages } from "../lib/i18n";
 import { measureHexDistance255, type EditableCell, type NormalizedCropRect } from "../lib/mard";
 import { getThemeClasses } from "../lib/theme";
@@ -345,7 +346,7 @@ export function PixelEditorPanel({
                 onSelectedLabelChange={onSelectedLabelChange}
               />
 
-              <EditorStage
+              <CanvasEditorStage
                 cells={cells}
                 gridWidth={gridWidth}
                 gridHeight={gridHeight}
@@ -554,7 +555,7 @@ function PindouModePanel({
         </div>
       )}
 
-        <EditorStage
+        <CanvasEditorStage
           cells={cells}
           gridWidth={gridWidth}
           gridHeight={gridHeight}
