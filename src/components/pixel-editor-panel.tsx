@@ -303,8 +303,16 @@ export function PixelEditorPanel({
               className={clsx(
                 "shrink-0 rounded-t-[10px] px-4 py-2 text-sm font-semibold outline-none transition",
                 panelMode === value
-                  ? clsx(theme.panel, theme.cardTitle, "translate-y-px shadow-sm")
-                  : clsx(theme.controlSegment, theme.cardMuted, "opacity-100 hover:brightness-95"),
+                  ? clsx(
+                      isDark ? theme.controlSegment : theme.panel,
+                      theme.cardTitle,
+                      "translate-y-px shadow-sm",
+                    )
+                  : clsx(
+                      isDark ? theme.panel : theme.controlSegment,
+                      theme.cardMuted,
+                      "opacity-100 hover:brightness-95",
+                    ),
               )}
             >
               {label}
@@ -368,7 +376,7 @@ export function PixelEditorPanel({
                 className={clsx(
                   "flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] border transition",
                   editFlipHorizontal ? theme.controlButtonActive : theme.pill,
-                  isDark ? "border-white/10" : "border-stone-200",
+                  isDark ? "border-white/14" : "border-stone-300",
                 )}
                 onClick={() => onEditFlipHorizontalChange(!editFlipHorizontal)}
                 title={t.pindouFlipHorizontal ?? "Flip Horizontally"}
@@ -1042,7 +1050,7 @@ function PindouModePanel({
                   ? "rounded-[10px] rounded-r-none shadow-sm backdrop-blur"
                   : "rounded-none border-r",
                 focusOnly ? theme.panel : theme.previewStage,
-                focusOnly ? "border" : (isDark ? "border-white/10" : "border-stone-200"),
+                focusOnly ? "border" : (isDark ? "border-white/14" : "border-stone-300"),
               )}
               style={{ width: `${focusColorRailWidth}px` }}
             >
@@ -1104,7 +1112,7 @@ function PindouModePanel({
                       </div>
                     </div>
                     {focusToolbarMenuOpen ? (
-                      <div className={clsx("absolute right-0 top-full -mt-px flex w-full min-w-0 flex-col gap-1.5 rounded-b-md rounded-t-none border border-t-0 p-1.5 shadow-sm backdrop-blur", theme.panel, isDark ? "border-white/10" : "border-stone-200")}>
+                      <div className={clsx("absolute right-0 top-full -mt-px flex w-full min-w-0 flex-col gap-1.5 rounded-b-md rounded-t-none border border-t-0 p-1.5 shadow-sm backdrop-blur", theme.panel, isDark ? "border-white/14" : "border-stone-300")}>
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
                           <div className={clsx("flex h-9 items-center gap-1 rounded-md border px-1 py-0.5", theme.pill)}>
                             <button
@@ -1623,11 +1631,11 @@ function EditResultSummary({
       ? triggerRect.bottom + 248 <= window.innerHeight - 12
       : true;
   const detailsPopupLeft =
-    hostRect === null
+    triggerRect === null
       ? 12
       : Math.min(
           window.innerWidth - detailsPopupWidth - 12,
-          Math.max(12, hostRect.left),
+          Math.max(12, triggerRect.left),
         );
   const detailsPopupTop =
     triggerRect === null
@@ -1781,8 +1789,8 @@ function EditResultSummary({
             className={clsx(
               "fixed z-[190] overflow-hidden rounded-[10px] border p-3 shadow-xl backdrop-blur",
               theme.controlShell,
-              detailsShowBelow ? "rounded-tr-none" : "rounded-br-none",
-              isDark ? "border-white/10" : "border-stone-200",
+              detailsShowBelow ? "rounded-tl-none" : "rounded-bl-none",
+              isDark ? "border-white/14" : "border-stone-300",
             )}
             onMouseEnter={() => {
               detailsHoldRef.current = true;
@@ -1885,7 +1893,7 @@ function EditResultSummary({
         className={clsx(
           "flex h-10 shrink-0 items-center gap-2 border px-3 text-sm font-semibold transition sm:px-4",
           detailsOpen ? theme.controlShell : theme.pill,
-          isDark ? "border-white/10" : "border-stone-200",
+          isDark ? "border-white/14" : "border-stone-300",
           detailsOpen ? (detailsShowBelow ? "rounded-[8px] rounded-b-none border-b-transparent" : "rounded-[8px] rounded-t-none border-t-transparent") : "rounded-[8px]",
         )}
         onMouseEnter={openDetailsPopup}
@@ -2152,7 +2160,7 @@ function ColorPickerPopup({
           className="h-4 w-4 rounded-full border border-black/10"
           style={{ backgroundColor: selectedHex ?? "transparent" }}
         />
-        <span className={clsx("hidden text-[11px] uppercase tracking-[0.14em] sm:inline", theme.cardMuted)}>{t.selectedColor}</span>
+        <span className={clsx("hidden text-sm font-semibold sm:inline", theme.cardTitle)}>{t.selectedColor}</span>
         <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{displayLabel}</span>
       </button>
     </div>
@@ -2317,7 +2325,7 @@ function InlineSliderField({
   const theme = getThemeClasses(isDark);
   return (
     <div className={clsx("flex min-w-[116px] shrink-0 items-center gap-2 rounded-md border px-2 py-2 sm:min-w-[210px] sm:gap-3 sm:px-3", theme.pill)}>
-      <label className={clsx("hidden shrink-0 text-[11px] font-semibold uppercase tracking-[0.14em] sm:inline", theme.cardMuted)} htmlFor={id}>
+      <label className={clsx("hidden shrink-0 text-sm font-semibold sm:inline", theme.cardTitle)} htmlFor={id}>
         {label}
       </label>
       <div className="flex min-w-0 flex-1 items-center gap-3">

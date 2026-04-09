@@ -12,6 +12,17 @@
   color: #231d16;
   font-synthesis-weight: none;
   text-rendering: optimizeLegibility;
+  --scrollbar-track: rgba(205, 196, 183, 0.64);
+  --scrollbar-thumb: rgba(139, 122, 101, 0.9);
+  --scrollbar-thumb-hover: rgba(123, 107, 88, 0.94);
+  --scrollbar-thumb-active: rgba(102, 88, 72, 0.96);
+}
+
+html[data-theme="dark"] {
+  --scrollbar-track: rgba(62, 47, 35, 0.72);
+  --scrollbar-thumb: rgba(173, 136, 93, 0.92);
+  --scrollbar-thumb-hover: rgba(201, 162, 116, 0.96);
+  --scrollbar-thumb-active: rgba(226, 187, 138, 0.98);
 }
 
 body {
@@ -22,6 +33,38 @@ body {
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  border-color: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 button,

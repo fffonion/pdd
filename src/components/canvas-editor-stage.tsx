@@ -735,7 +735,7 @@ export function CanvasEditorStage({
               : "cursor-grab"
           : "",
         theme.previewStage,
-        embeddedInPanel ? "" : isDark ? "border-white/10" : "border-stone-200",
+        embeddedInPanel ? "" : isDark ? "border-white/14" : "border-stone-300",
         viewportClassName,
       )}
       onFocus={() => {
