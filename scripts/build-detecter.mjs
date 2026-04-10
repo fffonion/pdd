@@ -13,13 +13,9 @@ const releaseArtifactPath = join(
   "release",
   "detecter.wasm",
 );
-const rustToolchain = process.env.RUSTUP_TOOLCHAIN?.trim() || "1.94.1";
 
 if (await shouldRebuildDetecter()) {
-  await runCommand("rustup", [
-    "run",
-    rustToolchain,
-    "cargo",
+  await runCommand("cargo", [
     "build",
     "--manifest-path",
     cargoManifestPath,

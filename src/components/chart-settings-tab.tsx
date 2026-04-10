@@ -79,9 +79,13 @@ export function ChartSettingsTab({
     "rounded-md border p-3",
     isDark ? "border-white/12 bg-white/[0.035]" : "border-stone-300 bg-white/78",
   );
-  const chartPreviewClassName = clsx(
-    "relative flex min-h-[260px] items-center justify-center overflow-hidden rounded-md border p-2 sm:min-h-[320px] sm:p-3 xl:min-h-0 xl:flex-[2_1_0%]",
+  const chartPanelClassName = clsx(
+    "flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0",
     isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78",
+  );
+  const chartPreviewClassName = clsx(
+    "relative flex min-h-[260px] flex-1 items-center justify-center overflow-hidden rounded-md sm:min-h-[320px] xl:min-h-0",
+    isDark ? "bg-white/[0.03]" : "bg-white/78",
   );
   const chartCodeFieldClassName = clsx(
     "rounded-md border px-3 py-2 shadow-inner transition",
@@ -252,68 +256,60 @@ export function ChartSettingsTab({
         </div>
 
         <aside className="order-last flex flex-col gap-3 xl:h-full xl:self-stretch">
-          <div className="flex items-center justify-between gap-3">
-            <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
-              {t.chartSettingsPreview}
-            </span>
-            <button
-              className={clsx(
-                "h-10 shrink-0 rounded-md border px-4 text-sm font-semibold transition",
-                !saveBusy && !chartPreviewBusy ? theme.primaryButton : theme.disabledButton,
-              )}
-              disabled={saveBusy || chartPreviewBusy}
-              onClick={() => void onSaveChart()}
-              type="button"
-            >
-              {t.downloadPng}
-            </button>
-          </div>
-          <div className={chartPreviewClassName}>
-            {chartPreviewUrl ? (
-              <img
-                alt={t.chartSettingsPreview}
-                className="h-full max-h-full w-full max-w-full rounded-sm border object-contain"
-                src={chartPreviewUrl}
-              />
-            ) : (
-              <p className={clsx("max-w-[260px] text-center text-sm", theme.cardMuted)}>
-                {t.chartSettingsPreviewEmpty}
-              </p>
-            )}
-            {chartPreviewBusy ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/58 backdrop-blur-[1px] dark:bg-black/36">
-                <div className="flex w-full max-w-[220px] flex-col items-center px-4">
-                  <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
-                    <div
-                      className={clsx(
-                        "absolute inset-y-0 w-1/3 rounded-full",
-                        isDark ? "bg-amber-200/90" : "bg-amber-700/85",
-                      )}
-                      style={{ animation: "pindou-indeterminate 1.2s ease-in-out infinite" }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <div className={clsx("flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0 xl:flex-[1_1_0%]", isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78")}>
-            <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
-              {t.chartSettingsChartCode}
-            </span>
-            <div
-              className={clsx(
-                "min-h-[160px] overflow-auto text-xs leading-5 xl:min-h-0 xl:flex-1",
-                chartCodeFieldClassName,
-              )}
-            >
-              <div className="break-all whitespace-normal">
-                {chartShareCode || t.chartSettingsChartCodePlaceholder}
-              </div>
-            </div>
-            <div className="flex justify-end">
+          <div className={clsx(chartPanelClassName, "xl:flex-[2_1_0%]")}>
+            <div className="flex items-center justify-between gap-3">
+              <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+                {t.chartSettingsPreview}
+              </span>
               <button
                 className={clsx(
-                  "h-10 rounded-md border px-4 text-sm font-semibold transition-all duration-200",
+                  "h-10 shrink-0 rounded-md border px-4 text-sm font-semibold transition",
+                  !saveBusy && !chartPreviewBusy ? theme.primaryButton : theme.disabledButton,
+                )}
+                disabled={saveBusy || chartPreviewBusy}
+                onClick={() => void onSaveChart()}
+                type="button"
+              >
+                {t.downloadPng}
+              </button>
+            </div>
+            <div className={chartPreviewClassName}>
+              {chartPreviewUrl ? (
+                <img
+                  alt={t.chartSettingsPreview}
+                  className="h-full max-h-full w-full max-w-full object-contain object-left"
+                  src={chartPreviewUrl}
+                />
+              ) : (
+                <p className={clsx("max-w-[260px] text-center text-sm", theme.cardMuted)}>
+                  {t.chartSettingsPreviewEmpty}
+                </p>
+              )}
+              {chartPreviewBusy ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/58 backdrop-blur-[1px] dark:bg-black/36">
+                  <div className="flex w-full max-w-[220px] flex-col items-center px-4">
+                    <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
+                      <div
+                        className={clsx(
+                          "absolute inset-y-0 w-1/3 rounded-full",
+                          isDark ? "bg-amber-200/90" : "bg-amber-700/85",
+                        )}
+                        style={{ animation: "pindou-indeterminate 1.2s ease-in-out infinite" }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className={clsx(chartPanelClassName, "xl:flex-[1_1_0%]")}>
+            <div className="flex items-center justify-between gap-3">
+              <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+                {t.chartSettingsChartCode}
+              </span>
+              <button
+                className={clsx(
+                  "h-10 shrink-0 rounded-md border px-4 text-sm font-semibold transition-all duration-200",
                   chartShareCode
                     ? chartShareCodeCopied
                       ? clsx(theme.primaryButton, "scale-[1.03] shadow-[0_6px_18px_rgba(120,72,18,0.14)]")
@@ -326,6 +322,16 @@ export function ChartSettingsTab({
               >
                 {chartShareCodeCopied ? t.chartSettingsCopyChartCodeCopied : t.chartSettingsCopyChartCode}
               </button>
+            </div>
+            <div
+              className={clsx(
+                "min-h-[160px] overflow-auto text-xs leading-5 xl:min-h-0 xl:flex-1",
+                chartCodeFieldClassName,
+              )}
+            >
+              <div className="break-all whitespace-normal">
+                {chartShareCode || t.chartSettingsChartCodePlaceholder}
+              </div>
             </div>
           </div>
         </aside>
