@@ -66,7 +66,7 @@ export function ChartSettingsTab({
     isDark ? "border-white/12 bg-white/[0.035]" : "border-stone-300 bg-white/78",
   );
   const chartPreviewClassName = clsx(
-    "relative flex min-h-[320px] flex-1 items-center justify-center overflow-hidden rounded-md border p-3",
+    "relative flex h-[min(44svh,420px)] min-h-[220px] items-center justify-center overflow-hidden rounded-md border p-2 sm:h-[min(50svh,520px)] sm:min-h-[280px] sm:p-3 xl:h-auto xl:min-h-[360px]",
     isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78",
   );
   const boardThemeLabels: Record<PindouBoardTheme, string> = {
@@ -79,7 +79,7 @@ export function ChartSettingsTab({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-auto">
-      <div className="grid min-h-0 flex-1 gap-5 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.6fr)] sm:px-5 sm:py-5">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 px-3 py-3 sm:gap-5 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)]">
         <div className="flex min-h-0 flex-1 flex-col gap-4">
           <label className="flex flex-col gap-2">
             <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsChartTitle}</span>
@@ -205,7 +205,7 @@ export function ChartSettingsTab({
           <div className="mt-auto pt-2">
             <button
               className={clsx(
-                "h-10 rounded-md border px-4 text-sm font-semibold transition",
+                "h-10 w-full rounded-md border px-4 text-sm font-semibold transition sm:w-auto",
                 !saveBusy && !chartPreviewBusy ? theme.primaryButton : theme.disabledButton,
               )}
               disabled={saveBusy || chartPreviewBusy}
@@ -217,7 +217,7 @@ export function ChartSettingsTab({
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-2">
+        <aside className="order-first flex min-h-0 flex-col gap-2 xl:order-last">
           <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
             {t.chartSettingsPreview}
           </span>
@@ -225,7 +225,7 @@ export function ChartSettingsTab({
             {chartPreviewUrl ? (
               <img
                 alt={t.chartSettingsPreview}
-                className="max-h-full max-w-full rounded-sm border object-contain"
+                className="h-full max-h-full w-full max-w-full rounded-sm border object-contain"
                 src={chartPreviewUrl}
               />
             ) : (

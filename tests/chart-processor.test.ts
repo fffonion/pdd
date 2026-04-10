@@ -335,7 +335,7 @@ test("embedded chart metadata should import directly without raster parsing", as
     version: 1,
     app: "pindou",
     colorSystemId: "mard_221",
-    fileName: "銆愭嫾璞嗚眴銆慹mbedded-test.png",
+    fileName: "【拼豆豆】embedded-test.png",
     gridWidth: 3,
     gridHeight: 2,
     preferredEditorMode: "pindou",
