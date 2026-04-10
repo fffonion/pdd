@@ -43,7 +43,7 @@ import {
 } from "./pixel-editor-chrome";
 import { EditResultSummary } from "./pixel-editor-result-summary";
 import type { Messages } from "../lib/i18n";
-import { type EditableCell, type NormalizedCropRect } from "../lib/mard";
+import { type EditableCell, type NormalizedCropRect } from "../lib/chart-processor";
 import { type PindouBeadShape, type PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 
@@ -1667,3 +1667,4 @@ function ContextToolStrip({
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-import clsx from "clsx";
+﻿import clsx from "clsx";
 import {
   ChevronDown,
   Crop,
@@ -11,7 +11,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import type { NormalizedCropRect } from "../lib/mard";
+import type { NormalizedCropRect } from "../lib/chart-processor";
 import { getThemeClasses } from "../lib/theme";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
@@ -548,3 +548,4 @@ function clampCropRect(cropRect: NormalizedCropRect): NormalizedCropRect {
 function clampNormalized(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
+

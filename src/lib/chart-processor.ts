@@ -5,6 +5,15 @@ import {
   detectChartBoardWithWasm,
   type WasmAutoDetection,
 } from "./detecter";
+import {
+  CHART_METADATA_APP,
+  CHART_METADATA_VERSION,
+  defaultOutputName,
+  embedChartMetadataInPngBlob,
+  isPngLikeFile,
+  readEmbeddedChartMetadataFromFile,
+  type EmbeddedChartMetadata,
+} from "./chart-png";
 import { getPindouBoardThemeShades, type PindouBoardTheme } from "./pindou-board-theme";
 
 const GRID_SEPARATOR_COLOR = "#C9C4BC";
@@ -12,12 +21,6 @@ const BOARD_FRAME_COLOR = "#111111";
 const CANVAS_BACKGROUND = "#F7F4EE";
 const OMITTED_BACKGROUND_HEX = "#FFFFFF";
 const MAX_DETECTION_EDGE = 768;
-const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
-const PNG_IHDR_CHUNK = "IHDR";
-const PNG_ITXT_CHUNK = "iTXt";
-const CHART_METADATA_KEYWORD = "pindou-chart";
-const CHART_METADATA_APP = "pindou";
-const CHART_METADATA_VERSION = 1;
 const BRAND_NAME = "拼豆豆";
 const CHART_EDGE_SAMPLE_PROGRESS = [0.15, 0.2, 0.3, 0.35];
 const CHART_EDGE_SAMPLE_INSET = 0.18;
@@ -124,17 +127,6 @@ export interface ProcessResult {
   paletteColorsUsed: number;
   colors: ColorCount[];
   cells: EditableCell[];
-}
-
-interface EmbeddedChartMetadata {
-  version: number;
-  app: string;
-  colorSystemId: string;
-  fileName: string;
-  gridWidth: number;
-  gridHeight: number;
-  preferredEditorMode: "edit" | "pindou";
-  cells: Array<[string, 1 | 0] | null>;
 }
 
 export interface AutoDetectionDebugResult {
@@ -756,210 +748,6 @@ function buildEmbeddedChartMetadata(input: {
       return [normalized.label, normalized.source === "manual" ? 1 : 0];
     }),
   };
-}
-
-async function embedChartMetadataInPngBlob(blob: Blob, metadata: EmbeddedChartMetadata) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const payload = injectPngITXtChunk(
-    bytes,
-    CHART_METADATA_KEYWORD,
-    JSON.stringify(metadata),
-  );
-  const blobBytes = Uint8Array.from(payload);
-  return new Blob([blobBytes], { type: "image/png" });
-}
-
-async function readEmbeddedChartMetadataFromFile(file: File) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const text = extractPngITXtChunk(bytes, CHART_METADATA_KEYWORD);
-  if (!text) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(text) as EmbeddedChartMetadata;
-    if (
-      parsed?.app !== CHART_METADATA_APP ||
-      parsed?.version !== CHART_METADATA_VERSION ||
-      !Array.isArray(parsed.cells) ||
-      typeof parsed.colorSystemId !== "string" ||
-      typeof parsed.fileName !== "string" ||
-      typeof parsed.gridWidth !== "number" ||
-      typeof parsed.gridHeight !== "number"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function isPngLikeFile(file: File) {
-  return file.type === "image/png" || /\.png$/i.test(file.name);
-}
-
-function injectPngITXtChunk(bytes: Uint8Array, keyword: string, text: string) {
-  if (!hasPngSignature(bytes)) {
-    return bytes;
-  }
-
-  const keywordBytes = encoder.encode(keyword);
-  const textBytes = encoder.encode(text);
-  const chunkData = new Uint8Array(keywordBytes.length + 5 + textBytes.length);
-  chunkData.set(keywordBytes, 0);
-  chunkData[keywordBytes.length] = 0;
-  chunkData[keywordBytes.length + 1] = 0;
-  chunkData[keywordBytes.length + 2] = 0;
-  chunkData[keywordBytes.length + 3] = 0;
-  chunkData[keywordBytes.length + 4] = 0;
-  chunkData.set(textBytes, keywordBytes.length + 5);
-
-  const chunk = buildPngChunk(PNG_ITXT_CHUNK, chunkData);
-  const ihdrChunkEnd = findPngChunkEnd(bytes, PNG_IHDR_CHUNK);
-  if (ihdrChunkEnd === null) {
-    return bytes;
-  }
-
-  const payload = new Uint8Array(bytes.length + chunk.length);
-  payload.set(bytes.slice(0, ihdrChunkEnd), 0);
-  payload.set(chunk, ihdrChunkEnd);
-  payload.set(bytes.slice(ihdrChunkEnd), ihdrChunkEnd + chunk.length);
-  return payload;
-}
-
-function extractPngITXtChunk(bytes: Uint8Array, keyword: string) {
-  if (!hasPngSignature(bytes)) {
-    return null;
-  }
-
-  let offset = PNG_SIGNATURE.length;
-  while (offset + 12 <= bytes.length) {
-    const length = readUint32(bytes, offset);
-    const type = decoder.decode(bytes.slice(offset + 4, offset + 8));
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + length;
-    if (dataEnd + 4 > bytes.length) {
-      return null;
-    }
-
-    if (type === PNG_ITXT_CHUNK) {
-      const keywordEnd = bytes.indexOf(0, dataStart);
-      if (keywordEnd >= dataStart && keywordEnd < dataEnd) {
-        const foundKeyword = decoder.decode(bytes.slice(dataStart, keywordEnd));
-        if (foundKeyword === keyword) {
-          const textStart = keywordEnd + 5;
-          if (textStart <= dataEnd) {
-            return decoder.decode(bytes.slice(textStart, dataEnd));
-          }
-        }
-      }
-    }
-
-    offset = dataEnd + 4;
-  }
-
-  return null;
-}
-
-function buildPngChunk(type: string, data: Uint8Array) {
-  const typeBytes = encoder.encode(type);
-  const chunk = new Uint8Array(12 + data.length);
-  writeUint32(chunk, 0, data.length);
-  chunk.set(typeBytes, 4);
-  chunk.set(data, 8);
-  writeUint32(chunk, 8 + data.length, crc32(concatUint8Arrays(typeBytes, data)));
-  return chunk;
-}
-
-function findPngChunkEnd(bytes: Uint8Array, chunkType: string) {
-  let offset = PNG_SIGNATURE.length;
-  while (offset + 12 <= bytes.length) {
-    const length = readUint32(bytes, offset);
-    const type = decoder.decode(bytes.slice(offset + 4, offset + 8));
-    const chunkEnd = offset + 12 + length;
-    if (chunkEnd > bytes.length) {
-      return null;
-    }
-    if (type === chunkType) {
-      return chunkEnd;
-    }
-    offset = chunkEnd;
-  }
-  return null;
-}
-
-function hasPngSignature(bytes: Uint8Array) {
-  if (bytes.length < PNG_SIGNATURE.length) {
-    return false;
-  }
-  for (let index = 0; index < PNG_SIGNATURE.length; index += 1) {
-    if (bytes[index] !== PNG_SIGNATURE[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function concatUint8Arrays(left: Uint8Array, right: Uint8Array) {
-  const combined = new Uint8Array(left.length + right.length);
-  combined.set(left, 0);
-  combined.set(right, left.length);
-  return combined;
-}
-
-function readUint32(bytes: Uint8Array, offset: number) {
-  return (
-    (bytes[offset] << 24) |
-    (bytes[offset + 1] << 16) |
-    (bytes[offset + 2] << 8) |
-    bytes[offset + 3]
-  ) >>> 0;
-}
-
-function writeUint32(bytes: Uint8Array, offset: number, value: number) {
-  bytes[offset] = (value >>> 24) & 0xff;
-  bytes[offset + 1] = (value >>> 16) & 0xff;
-  bytes[offset + 2] = (value >>> 8) & 0xff;
-  bytes[offset + 3] = value & 0xff;
-}
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-const crc32Table = buildCrc32Table();
-
-function buildCrc32Table() {
-  const table = new Uint32Array(256);
-  for (let index = 0; index < 256; index += 1) {
-    let value = index;
-    for (let bit = 0; bit < 8; bit += 1) {
-      value = (value & 1) === 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-    }
-    table[index] = value >>> 0;
-  }
-  return table;
-}
-
-function crc32(bytes: Uint8Array) {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc = crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function normalizeOutputStem(fileName: string) {
-  const dotIndex = fileName.lastIndexOf(".");
-  const rawStem = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
-  const stem = rawStem.replace(/^【拼豆豆】/u, "").trim();
-  return stem || "图纸";
-}
-
-function defaultOutputName(fileName: string, gridWidth: number, gridHeight: number) {
-  const stem = normalizeOutputStem(fileName);
-  void gridWidth;
-  void gridHeight;
-  return `【拼豆豆】${stem}.png`;
 }
 
 function buildExportChartTitle(
@@ -2878,4 +2666,5 @@ function canvasToBlob(canvas: HTMLCanvasElement, encodingFailedMessage: string) 
     }, "image/png");
   });
 }
+
 

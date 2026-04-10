@@ -1,10 +1,10 @@
-import { expect, test } from "bun:test";
+﻿import { expect, test } from "bun:test";
 import { basename, join } from "node:path";
 import {
   debugAutoDetectRaster,
   debugDetectChartBoardWithWasmPrepared,
   processImageFile,
-} from "../src/lib/mard";
+} from "../src/lib/chart-processor";
 import { detectChartBoardWithWasm } from "../src/lib/detecter";
 
 const fixtureDir = join(import.meta.dir, "fixtures");
@@ -335,7 +335,7 @@ test("embedded chart metadata should import directly without raster parsing", as
     version: 1,
     app: "pindou",
     colorSystemId: "mard_221",
-    fileName: "【拼豆豆】embedded-test.png",
+    fileName: "銆愭嫾璞嗚眴銆慹mbedded-test.png",
     gridWidth: 3,
     gridHeight: 2,
     preferredEditorMode: "pindou",
@@ -396,3 +396,4 @@ test("embedded chart metadata should import directly without raster parsing", as
     globalThis.createImageBitmap = originalCreateImageBitmap;
   }
 });
+

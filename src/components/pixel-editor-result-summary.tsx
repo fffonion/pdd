@@ -1,9 +1,9 @@
-import * as Slider from "@radix-ui/react-slider";
+﻿import * as Slider from "@radix-ui/react-slider";
 import clsx from "clsx";
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Messages } from "../lib/i18n";
-import { colorSystemOptions } from "../lib/mard";
+import { colorSystemOptions } from "../lib/chart-processor";
 import { getThemeClasses } from "../lib/theme";
 import { getNearestPaletteOptions } from "./pixel-editor-color-picker";
 
@@ -509,3 +509,4 @@ export function EditResultSummary({
     </>
   );
 }
+

@@ -1,4 +1,4 @@
-import { measureHexDistance255, type EditableCell, type NormalizedCropRect } from "./mard";
+﻿import { measureHexDistance255, type EditableCell, type NormalizedCropRect } from "./chart-processor";
 
 export type GridAxis = "width" | "height";
 export type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom";
@@ -508,3 +508,4 @@ export function findReplacementColor(
 
   return best;
 }
+

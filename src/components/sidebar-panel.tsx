@@ -1,8 +1,8 @@
-import * as Tabs from "@radix-ui/react-tabs";
+﻿import * as Tabs from "@radix-ui/react-tabs";
 import clsx from "clsx";
 import { useState } from "react";
 import type { Messages } from "../lib/i18n";
-import type { NormalizedCropRect } from "../lib/mard";
+import type { NormalizedCropRect } from "../lib/chart-processor";
 import { getThemeClasses } from "../lib/theme";
 import { CollapsibleSection, NumberSliderField, SliderRow, SwitchRow } from "./controls";
 import { OriginalPreviewCard } from "./preview-cards";
@@ -230,3 +230,4 @@ export function SidebarPanel({
     </section>
   );
 }
+

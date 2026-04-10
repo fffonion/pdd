@@ -16,6 +16,8 @@ export interface Messages {
   sourcePrivacyNote: string;
   sourceLocalOnly: string;
   sourceChooseImage: string;
+  sourceDropHint: string;
+  sourceDropActive: string;
   sourceFocusView: string;
   sourceExitFocus: string;
   sourceChartBadge: string;
@@ -152,6 +154,8 @@ export const messages: Record<Locale, Messages> = {
     sourcePrivacyNote: "全部处理都在浏览器内完成，不会上传到服务器。",
     sourceLocalOnly: "本地图片",
     sourceChooseImage: "选择图片",
+    sourceDropHint: "也支持把图片直接拖到这里。",
+    sourceDropActive: "松开即可导入图片",
     sourceFocusView: "放大原图",
     sourceExitFocus: "关闭放大原图",
     sourceChartBadge: "图纸",
@@ -282,6 +286,8 @@ export const messages: Record<Locale, Messages> = {
     sourcePrivacyNote: "Everything is processed in the browser and is not uploaded to a server.",
     sourceLocalOnly: "Local image",
     sourceChooseImage: "Import image",
+    sourceDropHint: "You can also drag an image here.",
+    sourceDropActive: "Drop to import the image",
     sourceFocusView: "????",
     sourceExitFocus: "??????",
     sourceChartBadge: "Chart",

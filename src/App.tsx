@@ -1,6 +1,6 @@
-import clsx from "clsx";
+﻿import clsx from "clsx";
 import { ImageUp, X } from "lucide-react";
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { BrandLogo } from "./components/brand-logo";
 import { LanguageSwitch, ThemeSwitch } from "./components/controls";
 import { OriginalPreviewCard } from "./components/preview-cards";
@@ -43,7 +43,7 @@ import {
   type EditableCell,
   type NormalizedCropRect,
   type ProcessResult,
-} from "./lib/mard";
+} from "./lib/chart-processor";
 import { getThemeClasses, type ThemeMode } from "./lib/theme";
 import type { EditorPanelMode } from "./components/pixel-editor-panel";
 
@@ -194,6 +194,7 @@ export default function App() {
   const resultUrlRef = useRef<string | null>(null);
   const disabledResultLabelsRef = useRef<string[]>([]);
   const sourceFocusOverlayRef = useRef<HTMLDivElement | null>(null);
+  const landingDragDepthRef = useRef(0);
   const saveChartRef = useRef<(() => void) | null>(null);
   const chartPreviewUrlRef = useRef<string | null>(null);
 
@@ -209,6 +210,7 @@ export default function App() {
   const [result, setResult] = useState<(ProcessResult & { url: string }) | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [landingDragActive, setLandingDragActive] = useState(false);
 
   const [gridMode, setGridMode] = useState<GridMode>("auto");
   const [colorSystemId, setColorSystemId] = useState("mard_221");
@@ -459,6 +461,8 @@ export default function App() {
   }
 
   function handleFileSelection(nextFile: File | null) {
+    landingDragDepthRef.current = 0;
+    setLandingDragActive(false);
     sourceMetaRunIdRef.current += 1;
     setError(null);
     setBusy(Boolean(nextFile));
@@ -524,6 +528,56 @@ export default function App() {
       });
       setSourceComplexity(nextMetadata.complexity);
     });
+  }
+
+  function dragEventContainsFiles(event: ReactDragEvent<HTMLElement>) {
+    return [...event.dataTransfer.items].some((item) => item.kind === "file");
+  }
+
+  function handleLandingDragEnter(event: ReactDragEvent<HTMLElement>) {
+    if (!dragEventContainsFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    landingDragDepthRef.current += 1;
+    setLandingDragActive(true);
+  }
+
+  function handleLandingDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (!dragEventContainsFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!landingDragActive) {
+      setLandingDragActive(true);
+    }
+  }
+
+  function handleLandingDragLeave(event: ReactDragEvent<HTMLElement>) {
+    if (!dragEventContainsFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    landingDragDepthRef.current = Math.max(0, landingDragDepthRef.current - 1);
+    if (landingDragDepthRef.current === 0) {
+      setLandingDragActive(false);
+    }
+  }
+
+  function handleLandingDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!dragEventContainsFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    landingDragDepthRef.current = 0;
+    setLandingDragActive(false);
+
+    const droppedFile =
+      [...event.dataTransfer.files].find((entry) => entry.type.startsWith("image/")) ??
+      event.dataTransfer.files[0] ??
+      null;
+    handleFileSelection(droppedFile);
   }
 
   async function refreshEditedChart(
@@ -1520,7 +1574,19 @@ export default function App() {
 
       {!file ? (
         <div className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-[1760px] items-center justify-center px-4 pb-8 pt-6 lg:px-6">
-          <section className={clsx("w-full max-w-[640px] rounded-[14px] border p-6 text-center backdrop-blur transition-colors sm:p-8", theme.panel)}>
+          <section
+            className={clsx(
+              "w-full max-w-[640px] rounded-[14px] border p-6 text-center backdrop-blur transition-all sm:p-8",
+              theme.panel,
+              landingDragActive
+                ? "scale-[1.01] border-[#7F684D] shadow-[0_18px_54px_rgba(54,34,16,0.16)]"
+                : "",
+            )}
+            onDragEnter={handleLandingDragEnter}
+            onDragOver={handleLandingDragOver}
+            onDragLeave={handleLandingDragLeave}
+            onDrop={handleLandingDrop}
+          >
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[10px] border sm:h-16 sm:w-16" >
               <ImageUp className={clsx("h-6 w-6 sm:h-7 sm:w-7", theme.cardTitle)} />
             </div>
@@ -1543,6 +1609,9 @@ export default function App() {
                 onChange={(event) => handleFileSelection(event.target.files?.[0] ?? null)}
               />
             </label>
+            <p className={clsx("mt-3 text-xs transition-colors", landingDragActive ? theme.cardTitle : theme.cardMuted)}>
+              {landingDragActive ? t.sourceDropActive : t.sourceDropHint}
+            </p>
           </section>
         </div>
       ) : (
@@ -1715,3 +1784,4 @@ export default function App() {
     </main>
   );
 }
+

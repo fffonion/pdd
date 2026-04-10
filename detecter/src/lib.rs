@@ -1,4 +1,5 @@
 mod detector;
+mod detector_signal;
 mod fft;
 mod types;
 

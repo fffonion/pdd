@@ -1,7 +1,7 @@
-import clsx from "clsx";
+﻿import clsx from "clsx";
 import { PaintBucket, Pipette } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent } from "react";
-import type { EditableCell, NormalizedCropRect } from "../lib/mard";
+import type { EditableCell, NormalizedCropRect } from "../lib/chart-processor";
 import { getPindouBoardThemeShades, type PindouBeadShape, type PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 
@@ -1460,3 +1460,4 @@ function isTypingElement(target: EventTarget | null) {
     element.closest("input, textarea, [contenteditable='true'], [role='textbox']") !== null
   );
 }
+
