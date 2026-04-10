@@ -1,19 +1,26 @@
+import {
+  deserializeChartPayload,
+  serializeChartPayload,
+} from "./chart-serialization";
+
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_IHDR_CHUNK = "IHDR";
 const PNG_ITXT_CHUNK = "iTXt";
 const CHART_METADATA_KEYWORD = "pindou-chart";
 
 export const CHART_METADATA_APP = "pindou";
-export const CHART_METADATA_VERSION = 1;
+export const CHART_METADATA_VERSION = 5;
 
 export interface EmbeddedChartMetadata {
   version: number;
   app: string;
   colorSystemId: string;
-  fileName: string;
+  fileName?: string;
   gridWidth: number;
   gridHeight: number;
   preferredEditorMode: "edit" | "pindou";
+  editingLocked?: boolean;
+  chartTitle?: string;
   cells: Array<[string, 1 | 0] | null>;
 }
 
@@ -25,7 +32,21 @@ export async function embedChartMetadataInPngBlob(
   const payload = injectPngITXtChunk(
     bytes,
     CHART_METADATA_KEYWORD,
-    JSON.stringify(metadata),
+    serializeChartPayload(
+      {
+        colorSystemId: metadata.colorSystemId,
+        gridWidth: metadata.gridWidth,
+        gridHeight: metadata.gridHeight,
+        preferredEditorMode: metadata.preferredEditorMode,
+        editingLocked: metadata.editingLocked,
+        title: metadata.chartTitle,
+        cells: metadata.cells,
+      },
+      {
+        includeManualRuns: true,
+        includePreferredEditorMode: true,
+      },
+    ),
   );
   const blobBytes = Uint8Array.from(payload);
   return new Blob([blobBytes], { type: "image/png" });
@@ -39,19 +60,18 @@ export async function readEmbeddedChartMetadataFromFile(file: File) {
   }
 
   try {
-    const parsed = JSON.parse(text) as EmbeddedChartMetadata;
-    if (
-      parsed?.app !== CHART_METADATA_APP ||
-      parsed?.version !== CHART_METADATA_VERSION ||
-      !Array.isArray(parsed.cells) ||
-      typeof parsed.colorSystemId !== "string" ||
-      typeof parsed.fileName !== "string" ||
-      typeof parsed.gridWidth !== "number" ||
-      typeof parsed.gridHeight !== "number"
-    ) {
-      return null;
-    }
-    return parsed;
+    const parsed = deserializeChartPayload(text);
+    return {
+      version: CHART_METADATA_VERSION,
+      app: CHART_METADATA_APP,
+      colorSystemId: parsed.colorSystemId,
+      gridWidth: parsed.gridWidth,
+      gridHeight: parsed.gridHeight,
+      preferredEditorMode: parsed.preferredEditorMode ?? "pindou",
+      editingLocked: parsed.editingLocked ?? false,
+      chartTitle: parsed.title,
+      cells: parsed.cells,
+    };
   } catch {
     return null;
   }

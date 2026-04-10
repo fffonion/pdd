@@ -71,8 +71,11 @@ export function WorkspacePanels({
   chartWatermarkImageName,
   onChartWatermarkImageFile,
   onChartWatermarkImageClear,
+  editingLocked = false,
   chartSaveMetadata,
   onChartSaveMetadataChange,
+  chartLockEditing,
+  onChartLockEditingChange,
   chartIncludeGuides,
   onChartIncludeGuidesChange,
   chartIncludeBoardPattern,
@@ -81,7 +84,12 @@ export function WorkspacePanels({
   onChartBoardThemeChange,
   chartIncludeLegend,
   onChartIncludeLegendChange,
+  chartIncludeQrCode,
+  onChartIncludeQrCodeChange,
   chartPreviewUrl,
+  chartShareCode,
+  chartShareCodeCopied,
+  onCopyChartShareCode,
   chartPreviewBusy,
   onSaveChart,
   saveBusy,
@@ -153,8 +161,11 @@ export function WorkspacePanels({
   chartWatermarkImageName: string;
   onChartWatermarkImageFile: (file: File | null) => void | Promise<void>;
   onChartWatermarkImageClear: () => void;
+  editingLocked?: boolean;
   chartSaveMetadata: boolean;
   onChartSaveMetadataChange: (value: boolean) => void;
+  chartLockEditing: boolean;
+  onChartLockEditingChange: (value: boolean) => void;
   chartIncludeGuides: boolean;
   onChartIncludeGuidesChange: (value: boolean) => void;
   chartIncludeBoardPattern: boolean;
@@ -163,7 +174,12 @@ export function WorkspacePanels({
   onChartBoardThemeChange: (value: PindouBoardTheme) => void;
   chartIncludeLegend: boolean;
   onChartIncludeLegendChange: (value: boolean) => void;
+  chartIncludeQrCode: boolean;
+  onChartIncludeQrCodeChange: (value: boolean) => void;
   chartPreviewUrl: string | null;
+  chartShareCode: string;
+  chartShareCodeCopied: boolean;
+  onCopyChartShareCode: () => void | Promise<void>;
   chartPreviewBusy: boolean;
   onSaveChart: () => void | Promise<void>;
   saveBusy: boolean;
@@ -243,8 +259,11 @@ export function WorkspacePanels({
             chartWatermarkImageName={chartWatermarkImageName}
             onChartWatermarkImageFile={onChartWatermarkImageFile}
             onChartWatermarkImageClear={onChartWatermarkImageClear}
+            editingLocked={editingLocked}
             chartSaveMetadata={chartSaveMetadata}
             onChartSaveMetadataChange={onChartSaveMetadataChange}
+            chartLockEditing={chartLockEditing}
+            onChartLockEditingChange={onChartLockEditingChange}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={onChartIncludeGuidesChange}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
@@ -253,7 +272,12 @@ export function WorkspacePanels({
             onChartBoardThemeChange={onChartBoardThemeChange}
             chartIncludeLegend={chartIncludeLegend}
             onChartIncludeLegendChange={onChartIncludeLegendChange}
+            chartIncludeQrCode={chartIncludeQrCode}
+            onChartIncludeQrCodeChange={onChartIncludeQrCodeChange}
             chartPreviewUrl={chartPreviewUrl}
+            chartShareCode={chartShareCode}
+            chartShareCodeCopied={chartShareCodeCopied}
+            onCopyChartShareCode={onCopyChartShareCode}
             chartPreviewBusy={chartPreviewBusy}
             onSaveChart={onSaveChart}
             saveBusy={saveBusy}
@@ -263,8 +287,15 @@ export function WorkspacePanels({
     );
   }
 
+  const useAutoHeightChartLayout = preferredEditorMode === "chart";
+
   return (
-    <section className="flex min-h-[78vh] min-w-0 flex-col overflow-visible sm:min-h-[72vh] lg:min-h-0 lg:overflow-hidden">
+    <section
+      className={clsx(
+        "flex min-w-0 flex-col overflow-visible sm:min-h-[72vh]",
+        useAutoHeightChartLayout ? "min-h-0 lg:overflow-visible" : "min-h-[78vh] lg:min-h-0 lg:overflow-hidden",
+      )}
+    >
       {result || busy ? (
         <PixelEditorPanel
           t={t}
@@ -335,8 +366,11 @@ export function WorkspacePanels({
           chartWatermarkImageName={chartWatermarkImageName}
           onChartWatermarkImageFile={onChartWatermarkImageFile}
           onChartWatermarkImageClear={onChartWatermarkImageClear}
+          editingLocked={editingLocked}
           chartSaveMetadata={chartSaveMetadata}
           onChartSaveMetadataChange={onChartSaveMetadataChange}
+          chartLockEditing={chartLockEditing}
+          onChartLockEditingChange={onChartLockEditingChange}
           chartIncludeGuides={chartIncludeGuides}
           onChartIncludeGuidesChange={onChartIncludeGuidesChange}
           chartIncludeBoardPattern={chartIncludeBoardPattern}
@@ -345,7 +379,12 @@ export function WorkspacePanels({
           onChartBoardThemeChange={onChartBoardThemeChange}
           chartIncludeLegend={chartIncludeLegend}
           onChartIncludeLegendChange={onChartIncludeLegendChange}
+          chartIncludeQrCode={chartIncludeQrCode}
+          onChartIncludeQrCodeChange={onChartIncludeQrCodeChange}
           chartPreviewUrl={chartPreviewUrl}
+          chartShareCode={chartShareCode}
+          chartShareCodeCopied={chartShareCodeCopied}
+          onCopyChartShareCode={onCopyChartShareCode}
           chartPreviewBusy={chartPreviewBusy}
           onSaveChart={onSaveChart}
           saveBusy={saveBusy}

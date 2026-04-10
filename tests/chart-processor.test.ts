@@ -1,8 +1,13 @@
 ﻿import { expect, test } from "bun:test";
 import { basename, join } from "node:path";
 import {
+  deserializeChartPayload,
+  serializeChartPayload,
+} from "../src/lib/chart-serialization";
+import {
   debugAutoDetectRaster,
   debugDetectChartBoardWithWasmPrepared,
+  findChartQrBoardPlacement,
   processImageFile,
 } from "../src/lib/chart-processor";
 import { detectChartBoardWithWasm } from "../src/lib/detecter";
@@ -23,10 +28,12 @@ interface EmbeddedChartMetadata {
   version: number;
   app: string;
   colorSystemId: string;
-  fileName: string;
+  fileName?: string;
   gridWidth: number;
   gridHeight: number;
   preferredEditorMode: "edit" | "pindou";
+  editingLocked?: boolean;
+  chartTitle?: string;
   cells: Array<[string, 1 | 0] | null>;
 }
 
@@ -175,9 +182,9 @@ function findPngChunkEnd(bytes: Uint8Array, type: string) {
   return null;
 }
 
-function injectChartMetadataChunk(bytes: Uint8Array, metadata: EmbeddedChartMetadata) {
+function injectChartMetadataChunk(bytes: Uint8Array, text: string) {
   const keywordBytes = new TextEncoder().encode(chartMetadataKeyword);
-  const textBytes = new TextEncoder().encode(JSON.stringify(metadata));
+  const textBytes = new TextEncoder().encode(text);
   const chunkData = new Uint8Array(keywordBytes.length + 5 + textBytes.length);
   chunkData.set(keywordBytes, 0);
   chunkData[keywordBytes.length] = 0;
@@ -199,6 +206,209 @@ function injectChartMetadataChunk(bytes: Uint8Array, metadata: EmbeddedChartMeta
     bytes.slice(insertOffset),
   ]);
 }
+
+test("compact chart serialization should round-trip chart payloads", () => {
+  const serialized = serializeChartPayload(
+    {
+      colorSystemId: "mard_221",
+      gridWidth: 4,
+      gridHeight: 3,
+      preferredEditorMode: "edit",
+      title: "Share Title",
+      cells: [
+        ["B21", 0],
+        null,
+        ["H7", 1],
+        null,
+        ["H19", 0],
+        ["M2", 1],
+        null,
+        null,
+        null,
+        ["F9", 0],
+        null,
+        ["A1", 0],
+      ],
+    },
+    {
+      includeManualRuns: true,
+      includePreferredEditorMode: true,
+    },
+  );
+
+  expect(deserializeChartPayload(serialized)).toEqual({
+    colorSystemId: "mard_221",
+    gridWidth: 4,
+    gridHeight: 3,
+    preferredEditorMode: "edit",
+    editingLocked: false,
+    title: "Share Title",
+    cells: [
+      ["B21", 0],
+      null,
+      ["H7", 1],
+      null,
+      ["H19", 0],
+      ["M2", 1],
+      null,
+      null,
+      null,
+      ["F9", 0],
+      null,
+      ["A1", 0],
+    ],
+  });
+});
+
+test("compact chart serialization should preserve editing lock", () => {
+  const serialized = serializeChartPayload(
+    {
+      colorSystemId: "mard_221",
+      gridWidth: 3,
+      gridHeight: 2,
+      editingLocked: true,
+      cells: [
+        ["B21", 0],
+        null,
+        ["H7", 1],
+        ["H19", 0],
+        null,
+        ["M2", 1],
+      ],
+    },
+    {
+      includeManualRuns: true,
+      includePreferredEditorMode: false,
+    },
+  );
+
+  expect(deserializeChartPayload(serialized)).toEqual({
+    colorSystemId: "mard_221",
+    gridWidth: 3,
+    gridHeight: 2,
+    preferredEditorMode: "pindou",
+    editingLocked: true,
+    title: "",
+    cells: [
+      ["B21", 0],
+      null,
+      ["H7", 1],
+      ["H19", 0],
+      null,
+      ["M2", 1],
+    ],
+  });
+});
+
+test("compact chart serialization should compress long empty spans", () => {
+  const serialized = serializeChartPayload({
+    colorSystemId: "mard_221",
+    gridWidth: 12,
+    gridHeight: 1,
+    cells: Array.from({ length: 12 }, () => null),
+  });
+
+  expect(deserializeChartPayload(serialized)).toEqual({
+    colorSystemId: "mard_221",
+    gridWidth: 12,
+    gridHeight: 1,
+    preferredEditorMode: "edit",
+    editingLocked: false,
+    title: "",
+    cells: Array.from({ length: 12 }, () => null),
+  });
+  expect(serialized.length).toBeLessThan(20);
+});
+
+test("compact chart serialization should encode less common colors with extended tokens", () => {
+  const serialized = serializeChartPayload({
+    colorSystemId: "mard_full",
+    gridWidth: 5,
+    gridHeight: 1,
+    preferredEditorMode: "pindou",
+    cells: [["A01", 0], ["P01", 0], null, ["P20", 1], ["A02", 0]],
+  });
+
+  expect(deserializeChartPayload(serialized)).toEqual({
+    colorSystemId: "mard_full",
+    gridWidth: 5,
+    gridHeight: 1,
+    preferredEditorMode: "pindou",
+    editingLocked: false,
+    title: "",
+    cells: [["A01", 0], ["P01", 0], null, ["P20", 1], ["A02", 0]],
+  });
+});
+
+test("compact chart serialization should deflate dense charts before base83 encoding", () => {
+  const serialized = serializeChartPayload({
+    colorSystemId: "mard_221",
+    gridWidth: 52,
+    gridHeight: 52,
+    preferredEditorMode: "pindou",
+    cells: Array.from({ length: 52 * 52 }, (_, index) => {
+      const column = index % 52;
+      const row = Math.floor(index / 52);
+      const palette = ["A1", "B21", "H7", "H19", "M2", "F9"];
+      return [palette[(row * 3 + column) % palette.length]!, 0] as [string, 0];
+    }),
+  });
+
+  expect(deserializeChartPayload(serialized)).toEqual({
+    colorSystemId: "mard_221",
+    gridWidth: 52,
+    gridHeight: 52,
+    preferredEditorMode: "pindou",
+    editingLocked: false,
+    title: "",
+    cells: Array.from({ length: 52 * 52 }, (_, index) => {
+      const column = index % 52;
+      const row = Math.floor(index / 52);
+      const palette = ["A1", "B21", "H7", "H19", "M2", "F9"];
+      return [palette[(row * 3 + column) % palette.length]!, 0] as [string, 0];
+    }),
+  });
+  expect(serialized.length).toBeLessThan(800);
+});
+
+test("chart QR placement should use a large empty board region when available", () => {
+  const cells = Array.from({ length: 16 * 16 }, () => ({
+    label: "A1",
+    hex: "#000000",
+    source: "detected" as const,
+  }));
+  for (let row = 0; row < 8; row += 1) {
+    for (let column = 0; column < 8; column += 1) {
+      cells[row * 16 + column] = { label: null, hex: null, source: null };
+    }
+  }
+
+  const placement = findChartQrBoardPlacement(cells, 16, 16, 28, 220);
+  expect(placement).not.toBeNull();
+  expect(placement).toMatchObject({
+    cellLeft: 0,
+    cellTop: 0,
+    cellSpan: 8,
+  });
+  expect(placement?.qrSize).toBeGreaterThanOrEqual(160);
+});
+
+test("chart QR placement should ignore empty regions that are not in board corners", () => {
+  const filledCells = Array.from({ length: 16 * 16 }, () => ({
+    label: "A1",
+    hex: "#000000",
+    source: "detected" as const,
+  }));
+  const middleEmptyCells = [...filledCells];
+  for (let row = 4; row < 12; row += 1) {
+    for (let column = 4; column < 12; column += 1) {
+      middleEmptyCells[row * 16 + column] = { label: null, hex: null, source: null };
+    }
+  }
+
+  expect(findChartQrBoardPlacement(filledCells, 16, 16, 28, 220)).toBeNull();
+  expect(findChartQrBoardPlacement(middleEmptyCells, 16, 16, 28, 220)).toBeNull();
+});
 
 test("auto detect should not crop bangboo _4 into a stripe", async () => {
   const raster = loadRasterWithPowerShell(sampleImagePath);
@@ -332,13 +542,15 @@ test("embedded chart metadata should import directly without raster parsing", as
   expect(basePngBytes.slice(0, PNG_SIGNATURE.length)).toEqual(PNG_SIGNATURE);
 
   const metadata: EmbeddedChartMetadata = {
-    version: 1,
+    version: 5,
     app: "pindou",
     colorSystemId: "mard_221",
     fileName: "【拼豆豆】embedded-test.png",
     gridWidth: 3,
     gridHeight: 2,
     preferredEditorMode: "pindou",
+    editingLocked: true,
+    chartTitle: "Embedded Title",
     cells: [
       ["B21", 0],
       ["H7", 1],
@@ -349,7 +561,26 @@ test("embedded chart metadata should import directly without raster parsing", as
     ],
   };
   const file = new File(
-    [injectChartMetadataChunk(basePngBytes, metadata)],
+    [
+      injectChartMetadataChunk(
+        basePngBytes,
+        serializeChartPayload(
+          {
+            colorSystemId: metadata.colorSystemId,
+            gridWidth: metadata.gridWidth,
+            gridHeight: metadata.gridHeight,
+            preferredEditorMode: metadata.preferredEditorMode,
+            editingLocked: metadata.editingLocked,
+            title: metadata.chartTitle,
+            cells: metadata.cells,
+          },
+          {
+            includeManualRuns: true,
+            includePreferredEditorMode: true,
+          },
+        ),
+      ),
+    ],
     "embedded-test.png",
     { type: "image/png" },
   );
@@ -372,7 +603,9 @@ test("embedded chart metadata should import directly without raster parsing", as
 
     expect(result.detectionMode).toBe("embedded-chart-metadata");
     expect(result.preferredEditorMode).toBe("pindou");
+    expect(result.editingLocked).toBe(true);
     expect(result.colorSystemId).toBe("mard_221");
+    expect(result.chartTitle).toBe("Embedded Title");
     expect(result.fileName).toBe("【拼豆豆】embedded-test.png");
     expect(result.gridWidth).toBe(3);
     expect(result.gridHeight).toBe(2);

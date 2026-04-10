@@ -236,6 +236,7 @@ export function SwitchRow({
   description,
   checked,
   onCheckedChange,
+  disabled = false,
   isDark,
 }: {
   id: string;
@@ -243,11 +244,12 @@ export function SwitchRow({
   description?: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
   isDark: boolean;
 }) {
   const theme = getThemeClasses(isDark);
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className={clsx("flex items-start justify-between gap-4", disabled && "opacity-55")}>
       <div className="min-w-0 flex-1">
         <Label.Root className={clsx("text-sm font-semibold", theme.cardTitle)} htmlFor={id}>
           {title}
@@ -259,6 +261,7 @@ export function SwitchRow({
       <Switch.Root
         id={id}
         checked={checked}
+        disabled={disabled}
         onCheckedChange={onCheckedChange}
         className={clsx("relative h-7 w-12 shrink-0 rounded-full outline-none transition", theme.switchRoot)}
       >

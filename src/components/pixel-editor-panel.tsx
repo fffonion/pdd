@@ -121,8 +121,11 @@ export function PixelEditorPanel({
   chartWatermarkImageName,
   onChartWatermarkImageFile,
   onChartWatermarkImageClear,
+  editingLocked = false,
   chartSaveMetadata,
   onChartSaveMetadataChange,
+  chartLockEditing,
+  onChartLockEditingChange,
   chartIncludeGuides,
   onChartIncludeGuidesChange,
   chartIncludeBoardPattern,
@@ -131,7 +134,12 @@ export function PixelEditorPanel({
   onChartBoardThemeChange,
   chartIncludeLegend,
   onChartIncludeLegendChange,
+  chartIncludeQrCode,
+  onChartIncludeQrCodeChange,
   chartPreviewUrl,
+  chartShareCode,
+  chartShareCodeCopied,
+  onCopyChartShareCode,
   chartPreviewBusy,
   onSaveChart,
   saveBusy,
@@ -205,8 +213,11 @@ export function PixelEditorPanel({
   chartWatermarkImageName: string;
   onChartWatermarkImageFile: (file: File | null) => void | Promise<void>;
   onChartWatermarkImageClear: () => void;
+  editingLocked?: boolean;
   chartSaveMetadata: boolean;
   onChartSaveMetadataChange: (value: boolean) => void;
+  chartLockEditing: boolean;
+  onChartLockEditingChange: (value: boolean) => void;
   chartIncludeGuides: boolean;
   onChartIncludeGuidesChange: (value: boolean) => void;
   chartIncludeBoardPattern: boolean;
@@ -215,7 +226,12 @@ export function PixelEditorPanel({
   onChartBoardThemeChange: (value: PindouBoardTheme) => void;
   chartIncludeLegend: boolean;
   onChartIncludeLegendChange: (value: boolean) => void;
+  chartIncludeQrCode: boolean;
+  onChartIncludeQrCodeChange: (value: boolean) => void;
   chartPreviewUrl: string | null;
+  chartShareCode: string;
+  chartShareCodeCopied: boolean;
+  onCopyChartShareCode: () => void | Promise<void>;
   chartPreviewBusy: boolean;
   onSaveChart: () => void | Promise<void>;
   saveBusy: boolean;
@@ -224,8 +240,10 @@ export function PixelEditorPanel({
   const flipHorizontalLabel = t.pindouFlipHorizontal ?? "Flip Horizontally";
   const panLabel = t.toolPan ?? "骞崇Щ";
   const zoomLabel = t.toolZoom ?? "缂╂斁";
+  const forcePindouMode = focusOnly || editingLocked;
   const panelBodyRef = useRef<HTMLElement | null>(null);
-  const [panelMode, setPanelMode] = useState<EditorPanelMode>(focusOnly ? "pindou" : preferredMode);
+  const [panelMode, setPanelMode] = useState<EditorPanelMode>(forcePindouMode ? "pindou" : preferredMode);
+  const useAutoHeightChartLayout = panelMode === "chart";
   const [focusedSketchLabel, setFocusedSketchLabel] = useState<string | null>(null);
   const [panelViewportHeight, setPanelViewportHeight] = useState(0);
   const activeMatchedColorCount = matchedColors.filter(
@@ -235,9 +253,10 @@ export function PixelEditorPanel({
     () => summarizeStageColors(cells, paletteOptions),
     [cells, paletteOptions],
   );
-  const topTabClassName = (active: boolean) =>
+  const topTabClassName = (active: boolean, disabled = false) =>
     clsx(
       "inline-flex h-10 shrink-0 items-center justify-center rounded-t-[10px] px-4 text-sm font-semibold leading-none outline-none transition",
+      disabled && "cursor-not-allowed opacity-55",
       active
         ? clsx(
             "relative z-10 -mb-px border border-b-transparent shadow-sm",
@@ -248,7 +267,7 @@ export function PixelEditorPanel({
         : clsx(
             isDark ? theme.panel : theme.controlSegment,
             theme.cardMuted,
-            "opacity-100 hover:brightness-95",
+            disabled ? "opacity-100" : "opacity-100 hover:brightness-95",
           ),
     );
 
@@ -276,16 +295,16 @@ export function PixelEditorPanel({
   }, [cells, focusedSketchLabel]);
 
   useEffect(() => {
-    if (focusOnly && panelMode !== "pindou") {
+    if (forcePindouMode && panelMode !== "pindou") {
       setPanelMode("pindou");
     }
-  }, [focusOnly, panelMode]);
+  }, [forcePindouMode, panelMode]);
 
   useEffect(() => {
-    if (!focusOnly) {
+    if (!forcePindouMode) {
       setPanelMode(preferredMode);
     }
-  }, [focusOnly, preferredMode, preferredModeSeed]);
+  }, [forcePindouMode, preferredMode, preferredModeSeed]);
 
   useEffect(() => {
     if (focusOnly) {
@@ -334,8 +353,8 @@ export function PixelEditorPanel({
         pindouColors={pindouColors}
         paintActiveRef={paintActiveRef}
         focusViewOpen={focusViewOpen}
-        onFocusViewOpenChange={onFocusViewOpenChange}
-        focusOnly
+            onFocusViewOpenChange={onFocusViewOpenChange}
+            focusOnly
         pindouFlipHorizontal={pindouFlipHorizontal}
         onPindouFlipHorizontalChange={onPindouFlipHorizontalChange}
         pindouShowLabels={pindouShowLabels}
@@ -353,7 +372,7 @@ export function PixelEditorPanel({
       />
     ) : (
     <Tabs.Root
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      className={clsx("flex min-w-0 flex-col", useAutoHeightChartLayout ? "w-full" : "min-h-0 flex-1")}
       value={panelMode}
       onValueChange={(value) => {
         const nextMode = value as EditorPanelMode;
@@ -364,30 +383,40 @@ export function PixelEditorPanel({
       <div className="relative z-10 mb-[-1px] flex min-w-0 items-end gap-3">
         <Tabs.List className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto overflow-y-hidden">
           {([
-            ["edit", t.editorTabEdit],
-            ["pindou", t.editorTabPindou],
-          ] as const).map(([value, label]) => (
+            ["edit", editingLocked ? t.editorTabEditLocked : t.editorTabEdit, editingLocked],
+            ["pindou", t.editorTabPindou, false],
+          ] as const).map(([value, label, disabled]) => (
             <Tabs.Trigger
               key={value}
               value={value}
-              className={topTabClassName(panelMode === value)}
+              className={topTabClassName(panelMode === value, disabled)}
+              disabled={disabled}
             >
               {label}
             </Tabs.Trigger>
           ))}
           <Tabs.Trigger
-            className={topTabClassName(panelMode === "chart")}
+            className={topTabClassName(panelMode === "chart", editingLocked)}
+            disabled={editingLocked}
             value="chart"
           >
-            {t.editorTabChartSettings}
+            {editingLocked ? t.editorTabChartLocked : t.editorTabChartSettings}
           </Tabs.Trigger>
         </Tabs.List>
       </div>
 
       <section
         ref={panelBodyRef}
-        className={clsx("flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] rounded-tl-none rounded-tr-none border backdrop-blur transition-colors sm:rounded-[16px] sm:rounded-tl-none sm:rounded-tr-none xl:rounded-[18px] xl:rounded-tl-none xl:rounded-tr-none", theme.panel)}
-        style={panelViewportHeight > 0 ? { height: `${panelViewportHeight}px`, minHeight: `${panelViewportHeight}px` } : undefined}
+        className={clsx(
+          "flex min-w-0 flex-col rounded-[14px] rounded-tl-none rounded-tr-none border backdrop-blur transition-colors sm:rounded-[16px] sm:rounded-tl-none sm:rounded-tr-none xl:rounded-[18px] xl:rounded-tl-none xl:rounded-tr-none",
+          useAutoHeightChartLayout ? "overflow-visible" : "min-h-0 flex-1 overflow-hidden",
+          theme.panel,
+        )}
+        style={
+          !useAutoHeightChartLayout && panelViewportHeight > 0
+            ? { height: `${panelViewportHeight}px`, minHeight: `${panelViewportHeight}px` }
+            : undefined
+        }
       >
         <Tabs.Content value="edit" className="flex min-h-0 flex-1">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -556,7 +585,10 @@ export function PixelEditorPanel({
           />
         </Tabs.Content>
 
-        <Tabs.Content value="chart" className="flex min-h-0 flex-1">
+        <Tabs.Content
+          value="chart"
+          className={clsx(useAutoHeightChartLayout ? "block" : "flex min-h-0 flex-1 overflow-hidden")}
+        >
           <ChartSettingsTab
             t={t}
             isDark={isDark}
@@ -570,6 +602,8 @@ export function PixelEditorPanel({
             onChartWatermarkImageClear={onChartWatermarkImageClear}
             chartSaveMetadata={chartSaveMetadata}
             onChartSaveMetadataChange={onChartSaveMetadataChange}
+            chartLockEditing={chartLockEditing}
+            onChartLockEditingChange={onChartLockEditingChange}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={onChartIncludeGuidesChange}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
@@ -578,7 +612,12 @@ export function PixelEditorPanel({
             onChartBoardThemeChange={onChartBoardThemeChange}
             chartIncludeLegend={chartIncludeLegend}
             onChartIncludeLegendChange={onChartIncludeLegendChange}
+            chartIncludeQrCode={chartIncludeQrCode}
+            onChartIncludeQrCodeChange={onChartIncludeQrCodeChange}
             chartPreviewUrl={chartPreviewUrl}
+            chartShareCode={chartShareCode}
+            chartShareCodeCopied={chartShareCodeCopied}
+            onCopyChartShareCode={onCopyChartShareCode}
             chartPreviewBusy={chartPreviewBusy}
             onSaveChart={onSaveChart}
             saveBusy={saveBusy || busy || !resultReady}

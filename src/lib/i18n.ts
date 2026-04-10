@@ -14,6 +14,9 @@ export interface Messages {
   sourceTitle: string;
   sourceLandingTitle: string;
   sourcePrivacyNote: string;
+  sourceChartCodeTitle: string;
+  sourceChartCodePlaceholder: string;
+  sourceImportChartCode: string;
   sourceLocalOnly: string;
   sourceChooseImage: string;
   sourceDropHint: string;
@@ -58,12 +61,18 @@ export interface Messages {
   editorTitle: string;
   editorSubtitle: string;
   editorTabEdit: string;
+  editorTabEditLocked: string;
   editorTabPindou: string;
   editorTabChartSettings: string;
+  editorTabChartLocked: string;
   chartSettingsChartTitle: string;
   chartSettingsChartTitlePlaceholder: string;
   chartSettingsPreview: string;
   chartSettingsPreviewEmpty: string;
+  chartSettingsChartCode: string;
+  chartSettingsChartCodePlaceholder: string;
+  chartSettingsCopyChartCode: string;
+  chartSettingsCopyChartCodeCopied: string;
   chartSettingsWatermarkText: string;
   chartSettingsWatermarkImage: string;
   chartSettingsChooseWatermarkImage: string;
@@ -71,11 +80,16 @@ export interface Messages {
   chartSettingsNoWatermarkImage: string;
   chartSettingsSaveMetadata: string;
   chartSettingsSaveMetadataDescription: string;
+  chartSettingsSaveMetadataLockedDescription: string;
+  chartSettingsLockEditing: string;
+  chartSettingsLockEditingDescription: string;
   chartSettingsIncludeGuides: string;
   chartSettingsIncludeGuidesDescription: string;
   chartSettingsIncludeBoardPattern: string;
   chartSettingsIncludeLegend: string;
   chartSettingsIncludeLegendDescription: string;
+  chartSettingsIncludeQrCode: string;
+  chartSettingsIncludeQrCodeDescription: string;
   pindouModeHint: string;
   pindouFlipHorizontal?: string;
   pindouBeadShapeLabel?: string;
@@ -130,6 +144,10 @@ export interface Messages {
   errorManualGridRequired: string;
   errorCanvasContextUnavailable: string;
   errorEncodingFailed: string;
+  errorChartLinkInvalid: string;
+  errorChartSerializationTooManyColors: string;
+  errorChartQrTooLarge: string;
+  chartQrCaption: string;
   chartTitle: (width: number, height: number) => string;
   chartMetaLine: (colorSystemLabel: string, totalBeads: number) => string;
   detectionMode: Record<string, string>;
@@ -152,6 +170,9 @@ export const messages: Record<Locale, Messages> = {
     sourceTitle: "原图",
     sourceLandingTitle: "导入图片，或导入现有图纸",
     sourcePrivacyNote: "全部处理都在浏览器内完成，不会上传到服务器。",
+    sourceChartCodeTitle: "或者，导入图纸码",
+    sourceChartCodePlaceholder: "",
+    sourceImportChartCode: "导入图纸码",
     sourceLocalOnly: "本地图片",
     sourceChooseImage: "选择图片",
     sourceDropHint: "也支持把图片直接拖到这里。",
@@ -196,12 +217,18 @@ export const messages: Record<Locale, Messages> = {
     editorTitle: "像素编辑",
     editorSubtitle: "点击格子可改色，或删除、补上任意像素。",
     editorTabEdit: "画图图",
+    editorTabEditLocked: "不许编辑",
     editorTabPindou: "拼豆豆",
     editorTabChartSettings: "导出出",
+    editorTabChartLocked: "不许导出",
     chartSettingsChartTitle: "图纸标题",
     chartSettingsChartTitlePlaceholder: "拼豆图纸",
     chartSettingsPreview: "预览图",
     chartSettingsPreviewEmpty: "设置图纸后，这里会显示导出预览。",
+    chartSettingsChartCode: "图纸码",
+    chartSettingsChartCodePlaceholder: "",
+    chartSettingsCopyChartCode: "复制图纸码",
+    chartSettingsCopyChartCodeCopied: "复制成功",
     chartSettingsWatermarkText: "水印文字",
     chartSettingsWatermarkImage: "水印图片",
     chartSettingsChooseWatermarkImage: "选择水印图片",
@@ -209,11 +236,16 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsNoWatermarkImage: "未选择水印图片",
     chartSettingsSaveMetadata: "保存元数据",
     chartSettingsSaveMetadataDescription: "开启后会把图纸数据写进 PNG，方便之后重新导入。",
+    chartSettingsSaveMetadataLockedDescription: "已启用禁止编辑时，会强制把锁定位写进 PNG，导入后只能进入拼豆模式。",
+    chartSettingsLockEditing: "禁止编辑",
+    chartSettingsLockEditingDescription: "导入这张导出的图纸后，将无法编辑和重新导出，只能进入拼豆模式。",
     chartSettingsIncludeGuides: "添加参考线",
     chartSettingsIncludeGuidesDescription: "关闭后会同时隐藏 5/10 格参考线和坐标数字。",
     chartSettingsIncludeBoardPattern: "添加底纹",
     chartSettingsIncludeLegend: "添加色卡",
     chartSettingsIncludeLegendDescription: "控制图纸底部的颜色详情和数量统计。",
+    chartSettingsIncludeQrCode: "添加二维码",
+    chartSettingsIncludeQrCodeDescription: "导出图纸时附带可直接打开分享图纸的二维码。",
     pindouModeHint: "点击颜色或图纸格子，可单独高亮一种颜色。",
     pindouFlipHorizontal: "水平翻转",
     pindouBeadShapeLabel: "豆子形状",
@@ -260,6 +292,10 @@ export const messages: Record<Locale, Messages> = {
     errorManualGridRequired: "手动模式下必须同时填写网格宽度和网格高度。",
     errorCanvasContextUnavailable: "当前环境无法使用 Canvas 2D 上下文。",
     errorEncodingFailed: "输出 PNG 编码失败。",
+    errorChartLinkInvalid: "链接里的图纸数据无效或不受支持。",
+    errorChartSerializationTooManyColors: "这张图纸使用的颜色超过 256 种，无法保存为紧凑图纸数据。",
+    errorChartQrTooLarge: "这张图纸太大，无法放进二维码。",
+    chartQrCaption: "扫描二维码，进入超好用的拼豆模式",
     chartTitle: (width, height) => `拼豆图纸 - ${width} x ${height}`,
     chartMetaLine: (colorSystemLabel, totalBeads) => `${colorSystemLabel} · ${totalBeads} 颗豆豆`,
     detectionMode: {
@@ -284,6 +320,9 @@ export const messages: Record<Locale, Messages> = {
     sourceTitle: "Source Image",
     sourceLandingTitle: "Import an image or an existing chart",
     sourcePrivacyNote: "Everything is processed in the browser and is not uploaded to a server.",
+    sourceChartCodeTitle: "Import Chart Code",
+    sourceChartCodePlaceholder: "",
+    sourceImportChartCode: "Import Chart Code",
     sourceLocalOnly: "Local image",
     sourceChooseImage: "Import image",
     sourceDropHint: "You can also drag an image here.",
@@ -328,12 +367,18 @@ export const messages: Record<Locale, Messages> = {
     editorTitle: "Pixel Editor",
     editorSubtitle: "Click cells to recolor them, or remove and add any pixel.",
     editorTabEdit: "Pixel Edit",
+    editorTabEditLocked: "No Editing",
     editorTabPindou: "Pindou Mode",
     editorTabChartSettings: "Export Settings",
+    editorTabChartLocked: "No Export",
     chartSettingsChartTitle: "Chart Title",
     chartSettingsChartTitlePlaceholder: "Bead Chart",
     chartSettingsPreview: "Preview",
     chartSettingsPreviewEmpty: "The exported chart preview appears here.",
+    chartSettingsChartCode: "Chart Code",
+    chartSettingsChartCodePlaceholder: "",
+    chartSettingsCopyChartCode: "Copy Chart Code",
+    chartSettingsCopyChartCodeCopied: "Copied",
     chartSettingsWatermarkText: "Watermark Text",
     chartSettingsWatermarkImage: "Watermark Image",
     chartSettingsChooseWatermarkImage: "Choose Watermark Image",
@@ -341,11 +386,18 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsNoWatermarkImage: "No watermark image selected",
     chartSettingsSaveMetadata: "Save Metadata",
     chartSettingsSaveMetadataDescription: "Embed chart data into the PNG so it can be imported directly later.",
+    chartSettingsSaveMetadataLockedDescription:
+      "When editing is locked, the PNG must keep embedded metadata so the lock bit survives import.",
+    chartSettingsLockEditing: "Lock Editing",
+    chartSettingsLockEditingDescription:
+      "When this exported chart is imported later, it can only open in Pindou Mode and cannot be edited or exported again.",
     chartSettingsIncludeGuides: "Show Guides",
     chartSettingsIncludeGuidesDescription: "Turning this off also hides axis labels and 5/10-grid guide lines.",
     chartSettingsIncludeBoardPattern: "Show Board Pattern",
     chartSettingsIncludeLegend: "Show Legend",
     chartSettingsIncludeLegendDescription: "Controls the color list and counts at the bottom of the exported chart.",
+    chartSettingsIncludeQrCode: "Show QR Code",
+    chartSettingsIncludeQrCodeDescription: "Adds a QR code that opens the shared chart URL.",
     pindouModeHint: "Click a color or a grid cell to highlight a single color.",
     pindouFlipHorizontal: "Flip Horizontally",
     pindouBeadShapeLabel: "Bead Shape",
@@ -396,6 +448,11 @@ export const messages: Record<Locale, Messages> = {
     errorManualGridRequired: "Manual mode requires both grid width and grid height.",
     errorCanvasContextUnavailable: "Canvas 2D context is not available in this environment.",
     errorEncodingFailed: "Failed to encode the output PNG.",
+    errorChartLinkInvalid: "The chart data in this link is invalid or unsupported.",
+    errorChartSerializationTooManyColors:
+      "This chart uses more than 256 colors, so it cannot be saved into the compact chart format.",
+    errorChartQrTooLarge: "This chart is too large to fit in a QR code.",
+    chartQrCaption: "Scan the QR code to open the super-handy Pindou Mode.",
     chartTitle: (width, height) => `Bead Chart - ${width} x ${height}`,
     chartMetaLine: (colorSystemLabel, totalBeads) => `${colorSystemLabel} · ${totalBeads} beads`,
     detectionMode: {

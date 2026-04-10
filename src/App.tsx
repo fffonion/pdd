@@ -35,6 +35,10 @@ import {
   type PindouBoardTheme,
 } from "./lib/pindou-board-theme";
 import {
+  deserializeChartPayload,
+  serializeChartPayload,
+} from "./lib/chart-serialization";
+import {
   exportChartFromCells,
   getPaletteOptions,
   measureHexDistance255,
@@ -182,6 +186,79 @@ async function exitBrowserFullscreen() {
   }
 }
 
+function extractSharedChartCode(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("pd")) {
+    return trimmed;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const fromUrl = url.searchParams.get("c");
+    if (fromUrl) {
+      return fromUrl;
+    }
+  } catch {
+    // Ignore invalid URLs and fall back to raw parsing.
+  }
+
+  const normalized = trimmed.startsWith("c=") ? `?${trimmed}` : trimmed;
+  const match = normalized.match(/(?:^|[?&])c=([^&#\s]+)/);
+  if (match?.[1]) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+
+  return trimmed;
+}
+
+function canDecodeSharedChartCode(input: string) {
+  const serialized = extractSharedChartCode(input);
+  if (!serialized) {
+    return false;
+  }
+
+  try {
+    deserializeChartPayload(serialized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function copyPlainText(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is unavailable.");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
 export default function App() {
   const runIdRef = useRef(0);
   const paintActiveRef = useRef(false);
@@ -192,11 +269,14 @@ export default function App() {
   const editorDraftRef = useRef<EditableCell[] | null>(null);
   const inputUrlRef = useRef<string | null>(null);
   const resultUrlRef = useRef<string | null>(null);
+  const sharedChartLoadAttemptedRef = useRef(false);
   const disabledResultLabelsRef = useRef<string[]>([]);
   const sourceFocusOverlayRef = useRef<HTMLDivElement | null>(null);
   const landingDragDepthRef = useRef(0);
+  const landingChartImportRunIdRef = useRef(0);
   const saveChartRef = useRef<(() => void) | null>(null);
   const chartPreviewUrlRef = useRef<string | null>(null);
+  const chartShareCodeCopiedTimeoutRef = useRef<number | null>(null);
 
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
   const [themeMode, setThemeMode] = useState<ThemeMode>(readInitialThemeMode);
@@ -211,6 +291,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [landingDragActive, setLandingDragActive] = useState(false);
+  const [landingChartCode, setLandingChartCode] = useState("");
+  const [landingChartImportBusy, setLandingChartImportBusy] = useState(false);
+  const [landingChartCodeInvalid, setLandingChartCodeInvalid] = useState(false);
 
   const [gridMode, setGridMode] = useState<GridMode>("auto");
   const [colorSystemId, setColorSystemId] = useState("mard_221");
@@ -253,13 +336,16 @@ export default function App() {
   const [chartWatermarkImageDataUrl, setChartWatermarkImageDataUrl] = useState<string | null>(null);
   const [chartWatermarkImageName, setChartWatermarkImageName] = useState("");
   const [chartSaveMetadata, setChartSaveMetadata] = useState(true);
+  const [chartLockEditing, setChartLockEditing] = useState(false);
   const [chartIncludeGuides, setChartIncludeGuides] = useState(true);
   const [chartIncludeBoardPattern, setChartIncludeBoardPattern] = useState(false);
   const [chartBoardTheme, setChartBoardTheme] = useState<PindouBoardTheme>("gray");
   const [chartIncludeLegend, setChartIncludeLegend] = useState(true);
+  const [chartIncludeQrCode, setChartIncludeQrCode] = useState(false);
   const [savingChart, setSavingChart] = useState(false);
   const [chartPreviewUrl, setChartPreviewUrl] = useState<string | null>(null);
   const [chartPreviewBusy, setChartPreviewBusy] = useState(false);
+  const [chartShareCodeCopied, setChartShareCodeCopied] = useState(false);
 
   const paletteOptions = getPaletteOptions(colorSystemId);
   const [selectedLabel, setSelectedLabel] = useState<string>(paletteOptions[0]?.label ?? "A1");
@@ -268,8 +354,16 @@ export default function App() {
   const isDark = themeMode === "dark" || (themeMode === "system" && systemPrefersDark);
   const useBrowserFullscreenForPindou = isMobileLikeUserAgent();
   const theme = getThemeClasses(isDark);
+  const chartCodeInputClassName = clsx(
+    "min-h-[120px] w-full rounded-md border px-3 py-2 text-sm leading-6 shadow-inner outline-none transition",
+    isDark
+      ? "border-white/10 bg-[#110d0b] text-stone-200 focus:border-white/18"
+      : "border-stone-300 bg-[#f6efe2] text-stone-800 focus:border-stone-500",
+  );
   const activeAspectRatio = getActiveAspectRatio(sourceSize, cropMode ? cropRect : null);
   const topError = error;
+  const chartEditingLocked = result?.editingLocked ?? false;
+  const effectiveChartSaveMetadata = chartSaveMetadata || chartLockEditing;
   const previewCropRect = combineNormalizedCropRects(
     cropMode ? cropRect : null,
     result?.detectedCropRect ?? null,
@@ -313,6 +407,57 @@ export default function App() {
     () => getMatchedCoveragePercent(baseMatchedColors, disabledResultLabels),
     [baseMatchedColors, disabledResultLabels],
   );
+  const chartShareCode = useMemo(() => {
+    if (!result) {
+      return "";
+    }
+
+    try {
+      return serializeChartPayload(
+        {
+          colorSystemId,
+          gridWidth: result.gridWidth,
+          gridHeight: result.gridHeight,
+          editingLocked: chartLockEditing,
+          title: chartExportTitle.trim(),
+          cells: renderedEditorCells.map((cell) =>
+            cell?.label
+              ? [cell.label, cell.source === "manual" ? 1 : 0] as [string, 1 | 0]
+              : null,
+          ),
+        },
+        {
+          includeManualRuns: false,
+          includePreferredEditorMode: false,
+        },
+      );
+    } catch {
+      return "";
+    }
+  }, [
+    chartExportTitle,
+    chartLockEditing,
+    colorSystemId,
+    renderedEditorCells,
+    result,
+  ]);
+
+  useEffect(() => {
+    setChartShareCodeCopied(false);
+    if (chartShareCodeCopiedTimeoutRef.current !== null) {
+      window.clearTimeout(chartShareCodeCopiedTimeoutRef.current);
+      chartShareCodeCopiedTimeoutRef.current = null;
+    }
+  }, [chartShareCode]);
+
+  useEffect(() => {
+    return () => {
+      if (chartShareCodeCopiedTimeoutRef.current !== null) {
+        window.clearTimeout(chartShareCodeCopiedTimeoutRef.current);
+        chartShareCodeCopiedTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     disabledResultLabelsRef.current = disabledResultLabels;
@@ -497,6 +642,7 @@ export default function App() {
     setEditorHistory([]);
     setEditorHistoryIndex(-1);
     setEditorDraftCells(null);
+    setChartLockEditing(false);
 
     if (result?.url) {
       URL.revokeObjectURL(result.url);
@@ -584,7 +730,7 @@ export default function App() {
     nextCells: EditableCell[],
     disabledLabelsOverride?: string[],
   ) {
-    if (!result) {
+    if (!result || result.editingLocked) {
       return;
     }
 
@@ -605,9 +751,15 @@ export default function App() {
         gridHeight: result.gridHeight,
         fileName: result.fileName,
         colorSystemId,
+        chartSettings: {
+          saveMetadata: false,
+        },
         messages: {
           canvasContextUnavailable: t.errorCanvasContextUnavailable,
           encodingFailed: t.errorEncodingFailed,
+          chartSerializationTooManyColors: t.errorChartSerializationTooManyColors,
+          chartQrTooLarge: t.errorChartQrTooLarge,
+          chartQrCaption: t.chartQrCaption,
           chartTitle: t.chartTitle,
           chartMetaLine: t.chartMetaLine,
         },
@@ -692,6 +844,9 @@ export default function App() {
   }
 
   function handleUndo() {
+    if (result?.editingLocked) {
+      return;
+    }
     if (editorHistoryIndexRef.current <= 0) {
       return;
     }
@@ -706,6 +861,9 @@ export default function App() {
   }
 
   function handleRedo() {
+    if (result?.editingLocked) {
+      return;
+    }
     if (
       editorHistoryIndexRef.current < 0 ||
       editorHistoryIndexRef.current >= editorHistoryRef.current.length - 1
@@ -723,6 +881,9 @@ export default function App() {
   }
 
   function applyDisabledResultLabels(nextDisabledLabels: string[]) {
+    if (result?.editingLocked) {
+      return;
+    }
     disabledResultLabelsRef.current = nextDisabledLabels;
     setDisabledResultLabels(nextDisabledLabels);
 
@@ -744,7 +905,12 @@ export default function App() {
   }
 
   function replaceMatchedColor(sourceLabel: string, targetLabel: string) {
-    if (!result || !editorBaseCells.length || sourceLabel === targetLabel) {
+    if (
+      !result ||
+      result.editingLocked ||
+      !editorBaseCells.length ||
+      sourceLabel === targetLabel
+    ) {
       return;
     }
 
@@ -766,7 +932,7 @@ export default function App() {
   }
 
   function applyCellEdit(index: number, toolOverride?: EditTool) {
-    if (!result || !editorBaseCells.length) {
+    if (!result || result.editingLocked || !editorBaseCells.length) {
       return;
     }
 
@@ -890,21 +1056,194 @@ export default function App() {
     resultUrlRef.current = result?.url ?? null;
   }, [result?.url]);
 
+  async function importSharedChartCode(
+    rawInput: string,
+    options?: {
+      isCancelled?: () => boolean;
+    },
+  ) {
+    const serialized = extractSharedChartCode(rawInput);
+    if (!serialized) {
+      throw new Error(t.errorChartLinkInvalid);
+    }
+
+    const decoded = deserializeChartPayload(serialized);
+    const paletteMap = new Map(
+      getPaletteOptions(decoded.colorSystemId).map((entry) => [entry.label, entry.hex]),
+    );
+    const cells: EditableCell[] = decoded.cells.map((entry) => {
+      if (!entry) {
+        return { label: null, hex: null, source: null };
+      }
+
+      const hex = paletteMap.get(entry[0]);
+      if (!hex) {
+        throw new Error("Unsupported shared chart color label.");
+      }
+
+      return {
+        label: entry[0],
+        hex,
+        source: entry[1] === 1 ? "manual" : "detected",
+      };
+    });
+    const syntheticName = decoded.title?.trim() ? `${decoded.title.trim()}.png` : "shared-chart.png";
+    const exported = await exportChartFromCells({
+      cells,
+      gridWidth: decoded.gridWidth,
+      gridHeight: decoded.gridHeight,
+      fileName: syntheticName,
+      colorSystemId: decoded.colorSystemId,
+      chartSettings: {
+        chartTitle: decoded.title,
+        saveMetadata: true,
+        lockEditing: decoded.editingLocked,
+      },
+      messages: {
+        canvasContextUnavailable: t.errorCanvasContextUnavailable,
+        encodingFailed: t.errorEncodingFailed,
+        chartSerializationTooManyColors: t.errorChartSerializationTooManyColors,
+        chartQrTooLarge: t.errorChartQrTooLarge,
+        chartQrCaption: t.chartQrCaption,
+        chartTitle: t.chartTitle,
+        chartMetaLine: t.chartMetaLine,
+      },
+    });
+
+    if (options?.isCancelled?.()) {
+      return;
+    }
+
+    setColorSystemId(decoded.colorSystemId);
+    setChartExportTitle(decoded.title ?? "");
+    handleFileSelection(
+      new File([exported.blob], exported.fileName, {
+        type: "image/png",
+      }),
+    );
+  }
+
+  async function handleCopyChartShareCode() {
+    if (!chartShareCode) {
+      return;
+    }
+
+    try {
+      await copyPlainText(chartShareCode);
+      setChartShareCodeCopied(true);
+      if (chartShareCodeCopiedTimeoutRef.current !== null) {
+        window.clearTimeout(chartShareCodeCopiedTimeoutRef.current);
+      }
+      chartShareCodeCopiedTimeoutRef.current = window.setTimeout(() => {
+        setChartShareCodeCopied(false);
+        chartShareCodeCopiedTimeoutRef.current = null;
+      }, 1800);
+    } catch {
+      // Keep the UI quiet if clipboard access is blocked.
+    }
+  }
+
   function buildChartExportSettings(): ChartExportSettings {
     return {
       chartTitle: chartExportTitle.trim(),
       watermarkText: chartWatermarkText.trim(),
       watermarkImageDataUrl: chartWatermarkImageDataUrl,
-      saveMetadata: chartSaveMetadata,
+      saveMetadata: effectiveChartSaveMetadata,
+      lockEditing: chartLockEditing,
       includeGuides: chartIncludeGuides,
       includeBoardPattern: chartIncludeBoardPattern,
       boardTheme: chartBoardTheme,
       includeLegend: chartIncludeLegend,
+      includeQrCode: chartIncludeQrCode,
     };
   }
 
   useEffect(() => {
-    if (editorPanelMode !== "chart" || !result || busy) {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const serialized = new URLSearchParams(window.location.search).get("c");
+    if (!serialized) {
+      return;
+    }
+    if (sharedChartLoadAttemptedRef.current) {
+      return;
+    }
+    sharedChartLoadAttemptedRef.current = true;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        await importSharedChartCode(serialized, {
+          isCancelled: () => cancelled,
+        });
+        if (cancelled) {
+          return;
+        }
+      } catch {
+        if (!cancelled) {
+          setError(t.errorChartLinkInvalid);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (file || !landingChartCode.trim()) {
+      setLandingChartImportBusy(false);
+      setLandingChartCodeInvalid(false);
+      return;
+    }
+
+    const runId = landingChartImportRunIdRef.current + 1;
+    landingChartImportRunIdRef.current = runId;
+    let cancelled = false;
+    setError(null);
+    setLandingChartCodeInvalid(false);
+    const importTimeoutId = window.setTimeout(() => {
+      setLandingChartImportBusy(true);
+      void importSharedChartCode(landingChartCode, {
+        isCancelled: () => cancelled || landingChartImportRunIdRef.current !== runId,
+      })
+        .then(() => {
+          if (cancelled || landingChartImportRunIdRef.current !== runId) {
+            return;
+          }
+          setLandingChartCode("");
+        })
+        .catch(() => {
+          // Ignore partial / invalid input while the user is still typing.
+        })
+        .finally(() => {
+          if (!cancelled && landingChartImportRunIdRef.current === runId) {
+            setLandingChartImportBusy(false);
+          }
+        });
+    }, 180);
+    const invalidTimeoutId = window.setTimeout(() => {
+      if (cancelled || landingChartImportRunIdRef.current !== runId) {
+        return;
+      }
+
+      if (!canDecodeSharedChartCode(landingChartCode)) {
+        setLandingChartCodeInvalid(true);
+      }
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(importTimeoutId);
+      window.clearTimeout(invalidTimeoutId);
+    };
+  }, [file, landingChartCode]);
+
+  useEffect(() => {
+    if (editorPanelMode !== "chart" || !result || busy || chartEditingLocked) {
       setChartPreviewBusy(false);
       setChartPreviewUrl((previous) => {
         if (previous) {
@@ -933,6 +1272,9 @@ export default function App() {
             messages: {
               canvasContextUnavailable: t.errorCanvasContextUnavailable,
               encodingFailed: t.errorEncodingFailed,
+              chartSerializationTooManyColors: t.errorChartSerializationTooManyColors,
+              chartQrTooLarge: t.errorChartQrTooLarge,
+              chartQrCaption: t.chartQrCaption,
               chartTitle: t.chartTitle,
               chartMetaLine: t.chartMetaLine,
             },
@@ -976,6 +1318,7 @@ export default function App() {
     };
   }, [
     busy,
+    chartEditingLocked,
     colorSystemId,
     editorPanelMode,
     renderedEditorCells,
@@ -983,11 +1326,13 @@ export default function App() {
     chartExportTitle,
     chartWatermarkText,
     chartWatermarkImageDataUrl,
-    chartSaveMetadata,
+    effectiveChartSaveMetadata,
+    chartLockEditing,
     chartIncludeGuides,
     chartIncludeBoardPattern,
     chartBoardTheme,
     chartIncludeLegend,
+    chartIncludeQrCode,
     locale,
   ]);
 
@@ -1001,7 +1346,7 @@ export default function App() {
   }, []);
 
   async function handleSaveChart() {
-    if (!result || savingChart || busy) {
+    if (!result || result.editingLocked || savingChart || busy) {
       return;
     }
 
@@ -1017,6 +1362,9 @@ export default function App() {
         messages: {
           canvasContextUnavailable: t.errorCanvasContextUnavailable,
           encodingFailed: t.errorEncodingFailed,
+          chartSerializationTooManyColors: t.errorChartSerializationTooManyColors,
+          chartQrTooLarge: t.errorChartQrTooLarge,
+          chartQrCaption: t.chartQrCaption,
           chartTitle: t.chartTitle,
           chartMetaLine: t.chartMetaLine,
         },
@@ -1296,6 +1644,9 @@ export default function App() {
               manualGridRequired: t.errorManualGridRequired,
               canvasContextUnavailable: t.errorCanvasContextUnavailable,
               encodingFailed: t.errorEncodingFailed,
+              chartSerializationTooManyColors: t.errorChartSerializationTooManyColors,
+              chartQrTooLarge: t.errorChartQrTooLarge,
+              chartQrCaption: t.chartQrCaption,
               chartTitle: t.chartTitle,
               chartMetaLine: t.chartMetaLine,
             },
@@ -1363,7 +1714,11 @@ export default function App() {
           if (processed.colorSystemId !== colorSystemId) {
             setColorSystemId(processed.colorSystemId);
           }
-          setEditorPanelMode(processed.preferredEditorMode);
+          setChartLockEditing(processed.editingLocked);
+          if (processed.editingLocked) {
+            setChartSaveMetadata(true);
+          }
+          setEditorPanelMode(processed.editingLocked ? "pindou" : processed.preferredEditorMode);
           startTransition(() => {
             setResult((previous) => {
               if (previous?.url) {
@@ -1512,8 +1867,11 @@ export default function App() {
               setChartWatermarkImageDataUrl(null);
               setChartWatermarkImageName("");
             }}
-            chartSaveMetadata={chartSaveMetadata}
+            editingLocked={chartEditingLocked}
+            chartSaveMetadata={effectiveChartSaveMetadata}
             onChartSaveMetadataChange={setChartSaveMetadata}
+            chartLockEditing={chartLockEditing}
+            onChartLockEditingChange={setChartLockEditing}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={setChartIncludeGuides}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
@@ -1522,7 +1880,12 @@ export default function App() {
             onChartBoardThemeChange={setChartBoardTheme}
             chartIncludeLegend={chartIncludeLegend}
             onChartIncludeLegendChange={setChartIncludeLegend}
+            chartIncludeQrCode={chartIncludeQrCode}
+            onChartIncludeQrCodeChange={setChartIncludeQrCode}
             chartPreviewUrl={chartPreviewUrl}
+            chartShareCode={chartShareCode}
+            chartShareCodeCopied={chartShareCodeCopied}
+            onCopyChartShareCode={handleCopyChartShareCode}
             chartPreviewBusy={chartPreviewBusy}
             onSaveChart={handleSaveChart}
             saveBusy={savingChart}
@@ -1612,10 +1975,43 @@ export default function App() {
             <p className={clsx("mt-3 text-xs transition-colors", landingDragActive ? theme.cardTitle : theme.cardMuted)}>
               {landingDragActive ? t.sourceDropActive : t.sourceDropHint}
             </p>
+
+            <div className="mt-6 w-full">
+              <div className="flex items-center gap-4">
+                <div className={clsx("h-px flex-1", theme.divider)} />
+                <p className={clsx("shrink-0 text-sm font-semibold", theme.cardTitle)}>
+                  {t.sourceChartCodeTitle}
+                </p>
+                <div className={clsx("h-px flex-1", theme.divider)} />
+              </div>
+              <textarea
+                className={clsx(
+                  "mt-4 resize-none transition-[border-color,background-color,box-shadow,transform]",
+                  chartCodeInputClassName,
+                  landingChartCodeInvalid &&
+                    (isDark
+                      ? "animate-[pindou-input-shake_0.42s_ease-in-out_2] border-rose-300/45 bg-[#2a1116] text-rose-100 shadow-[0_0_0_1px_rgba(253,164,175,0.16)]"
+                      : "animate-[pindou-input-shake_0.42s_ease-in-out_2] border-rose-500/45 bg-[#fff0f1] shadow-[0_0_0_1px_rgba(244,63,94,0.14)]"),
+                  landingChartImportBusy && "opacity-70",
+                )}
+                aria-invalid={landingChartCodeInvalid}
+                placeholder={t.sourceChartCodePlaceholder}
+                readOnly={landingChartImportBusy}
+                value={landingChartCode}
+                onChange={(event) => setLandingChartCode(event.target.value)}
+              />
+            </div>
           </section>
         </div>
       ) : (
-        <div className="mx-auto grid min-h-0 max-w-[1760px] gap-4 px-4 pb-6 pt-4 lg:h-[calc(100vh-5rem)] lg:grid-cols-[minmax(320px,22vw)_minmax(0,1fr)] lg:gap-6 lg:overflow-hidden lg:px-6 lg:pt-4">
+        <div
+          className={clsx(
+            "mx-auto grid min-h-0 max-w-[1760px] gap-4 px-4 pb-6 pt-4 lg:grid-cols-[minmax(320px,22vw)_minmax(0,1fr)] lg:gap-6 lg:px-6 lg:pt-4",
+            editorPanelMode === "chart"
+              ? "lg:items-start lg:overflow-visible"
+              : "lg:h-[calc(100vh-5rem)] lg:overflow-hidden",
+          )}
+        >
           <SidebarPanel
             t={t}
             file={file}
@@ -1716,8 +2112,11 @@ export default function App() {
               setChartWatermarkImageDataUrl(null);
               setChartWatermarkImageName("");
             }}
-            chartSaveMetadata={chartSaveMetadata}
+            editingLocked={chartEditingLocked}
+            chartSaveMetadata={effectiveChartSaveMetadata}
             onChartSaveMetadataChange={setChartSaveMetadata}
+            chartLockEditing={chartLockEditing}
+            onChartLockEditingChange={setChartLockEditing}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={setChartIncludeGuides}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
@@ -1726,7 +2125,12 @@ export default function App() {
             onChartBoardThemeChange={setChartBoardTheme}
             chartIncludeLegend={chartIncludeLegend}
             onChartIncludeLegendChange={setChartIncludeLegend}
+            chartIncludeQrCode={chartIncludeQrCode}
+            onChartIncludeQrCodeChange={setChartIncludeQrCode}
             chartPreviewUrl={chartPreviewUrl}
+            chartShareCode={chartShareCode}
+            chartShareCodeCopied={chartShareCodeCopied}
+            onCopyChartShareCode={handleCopyChartShareCode}
             chartPreviewBusy={chartPreviewBusy}
             onSaveChart={handleSaveChart}
             saveBusy={savingChart}

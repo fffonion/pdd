@@ -1,5 +1,4 @@
-﻿import paletteJson from "../data/mard-palette-221.json";
-import colorSystemMappingJson from "../data/color-system-mapping.json";
+﻿import QRCode from "qrcode";
 import {
   detectAutoRasterWithWasm,
   detectChartBoardWithWasm,
@@ -14,6 +13,12 @@ import {
   readEmbeddedChartMetadataFromFile,
   type EmbeddedChartMetadata,
 } from "./chart-png";
+import {
+  buildChartShareUrl,
+  ChartSerializationError,
+  serializeChartPayload,
+} from "./chart-serialization";
+import { sharedColorSystemDefinitions } from "./color-system-data";
 import { getPindouBoardThemeShades, type PindouBoardTheme } from "./pindou-board-theme";
 
 const GRID_SEPARATOR_COLOR = "#C9C4BC";
@@ -80,6 +85,9 @@ export interface ProcessMessages {
   manualGridRequired: string;
   canvasContextUnavailable: string;
   encodingFailed: string;
+  chartSerializationTooManyColors: string;
+  chartQrTooLarge: string;
+  chartQrCaption: string;
   chartTitle: (width: number, height: number) => string;
   chartMetaLine: (colorSystemLabel: string, totalBeads: number) => string;
 }
@@ -89,10 +97,13 @@ export interface ChartExportSettings {
   watermarkText?: string;
   watermarkImageDataUrl?: string | null;
   saveMetadata?: boolean;
+  lockEditing?: boolean;
   includeGuides?: boolean;
   includeBoardPattern?: boolean;
   boardTheme?: PindouBoardTheme;
   includeLegend?: boolean;
+  includeQrCode?: boolean;
+  shareUrl?: string | null;
 }
 
 export interface ColorCount {
@@ -116,9 +127,11 @@ export interface ProcessResult {
   blob: Blob;
   fileName: string;
   colorSystemId: string;
+  chartTitle?: string;
   detectionMode: string;
   effectiveReduceColors: boolean;
   preferredEditorMode: "edit" | "pindou";
+  editingLocked: boolean;
   detectedCropRect: NormalizedCropRect | null;
   gridWidth: number;
   gridHeight: number;
@@ -127,6 +140,16 @@ export interface ProcessResult {
   paletteColorsUsed: number;
   colors: ColorCount[];
   cells: EditableCell[];
+}
+
+export interface ChartQrBoardPlacement {
+  cellLeft: number;
+  cellTop: number;
+  cellSpan: number;
+  cardWidth: number;
+  cardHeight: number;
+  cardPadding: number;
+  qrSize: number;
 }
 
 export interface AutoDetectionDebugResult {
@@ -186,9 +209,6 @@ export function measureHexDistance255(
   const right = rgbToOklab(hexToRgb(rightHex.toUpperCase()));
   return Math.sqrt(oklabDistanceSquared(left, right)) * 255;
 }
-
-const paletteMap = paletteJson as Record<string, string>;
-const colorSystemMapping = colorSystemMappingJson as Record<string, Record<string, string>>;
 
 interface PaletteDefinition {
   id: string;
@@ -275,31 +295,19 @@ function orderPaletteByPerceptualAdjacency(colors: PaletteColor[]) {
   return ordered;
 }
 
-const paletteDefinitions = new Map<string, PaletteDefinition>();
-paletteDefinitions.set("mard_221", buildPaletteDefinition("mard_221", "MARD 221", paletteMap));
+const paletteDefinitions = new Map<string, PaletteDefinition>(
+  sharedColorSystemDefinitions.map((entry) => [
+    entry.id,
+    buildPaletteDefinition(entry.id, entry.label, entry.labelToHex),
+  ]),
+);
 
-for (const systemName of ["MARD", "COCO", "漫漫", "盼盼", "咪小窝"]) {
-  const labelToHex: Record<string, string> = {};
-  for (const [hex, mapping] of Object.entries(colorSystemMapping)) {
-    const label = mapping[systemName];
-    if (label) {
-      labelToHex[label] = hex.toUpperCase();
-    }
-  }
-
-  const id = systemName === "MARD" ? "mard_full" : `system_${systemName}`;
-  const label = systemName === "MARD" ? "MARD Full" : systemName;
-  paletteDefinitions.set(id, buildPaletteDefinition(id, label, labelToHex));
-}
-
-export const colorSystemOptions: ColorSystemOption[] = [
-  { id: "mard_221", label: "MARD 221" },
-  { id: "mard_full", label: "MARD Full" },
-  { id: "system_COCO", label: "COCO" },
-  { id: "system_漫漫", label: "漫漫" },
-  { id: "system_盼盼", label: "盼盼" },
-  { id: "system_咪小窝", label: "咪小窝" },
-].filter((option) => paletteDefinitions.has(option.id));
+export const colorSystemOptions: ColorSystemOption[] = sharedColorSystemDefinitions.map(
+  (entry) => ({
+    id: entry.id,
+    label: entry.label,
+  }),
+);
 
 export function getPaletteOptions(colorSystemId = "mard_221"): PaletteOption[] {
   return getPaletteDefinition(colorSystemId).options;
@@ -315,6 +323,10 @@ const defaultProcessMessages: ProcessMessages = {
   manualGridRequired: "Manual mode requires both grid width and grid height.",
   canvasContextUnavailable: "Canvas 2D context is not available in this browser.",
   encodingFailed: "Failed to encode output image.",
+  chartSerializationTooManyColors:
+    "This chart uses more than 256 colors, so it cannot be saved into the compact chart format.",
+  chartQrTooLarge: "This chart is too large to fit in a QR code.",
+  chartQrCaption: "Scan the QR code to open the super-handy Pindou Mode.",
   chartTitle: (width, height) => `Bead Chart - ${width} x ${height}`,
   chartMetaLine: (colorSystemLabel, totalBeads) => `${colorSystemLabel} 路 ${totalBeads} beads`,
 };
@@ -512,6 +524,8 @@ export async function processImageFile(
     processMessages.chartTitle(gridWidth, gridHeight),
     processMessages.chartMetaLine(paletteDefinition.label, totalBeads),
     processMessages.canvasContextUnavailable,
+    processMessages.chartQrTooLarge,
+    processMessages.chartQrCaption,
     undefined,
   );
   const blob = await buildChartBlobWithMetadata(
@@ -524,16 +538,19 @@ export async function processImageFile(
       gridHeight,
       preferredEditorMode,
     },
-    processMessages.encodingFailed,
+    processMessages,
+    false,
   );
 
   return {
     blob,
     fileName: defaultOutputName(file.name, gridWidth, gridHeight),
     colorSystemId: paletteDefinition.id,
+    chartTitle: undefined,
     detectionMode,
     effectiveReduceColors,
     preferredEditorMode,
+    editingLocked: false,
     detectedCropRect,
     gridWidth,
     gridHeight,
@@ -606,6 +623,26 @@ export async function exportChartFromCells(options: {
   const colors = summarizeCells(normalizedCells, paletteDefinition);
   const totalBeads = colors.reduce((sum, color) => sum + color.count, 0);
   const fallbackTitle = processMessages.chartTitle(options.gridWidth, options.gridHeight);
+  const chartSettings = options.chartSettings ? { ...options.chartSettings } : undefined;
+  if (chartSettings?.includeQrCode) {
+    chartSettings.shareUrl = buildChartShareUrl(
+      serializeCompactChartPayload(
+        {
+          cells: normalizedCells,
+          colorSystemId: paletteDefinition.id,
+          gridWidth: options.gridWidth,
+          gridHeight: options.gridHeight,
+          editingLocked: chartSettings.lockEditing,
+          title: chartSettings.chartTitle,
+        },
+        {
+          includeManualRuns: false,
+          includePreferredEditorMode: false,
+        },
+        processMessages,
+      ),
+    );
+  }
   const canvas = await renderChart(
     normalizedCells,
     colors,
@@ -613,14 +650,16 @@ export async function exportChartFromCells(options: {
     options.gridHeight,
     chooseCellSize(options.gridWidth, options.gridHeight, options.cellSize),
     buildExportChartTitle(
-      options.chartSettings?.chartTitle,
+      chartSettings?.chartTitle,
       options.gridWidth,
       options.gridHeight,
       fallbackTitle,
     ),
     processMessages.chartMetaLine(paletteDefinition.label, totalBeads),
     processMessages.canvasContextUnavailable,
-    options.chartSettings,
+    processMessages.chartQrTooLarge,
+    processMessages.chartQrCaption,
+    chartSettings,
   );
   const blob = await buildChartBlobWithMetadata(
     canvas,
@@ -631,9 +670,11 @@ export async function exportChartFromCells(options: {
       gridWidth: options.gridWidth,
       gridHeight: options.gridHeight,
       preferredEditorMode: "pindou",
+      editingLocked: chartSettings?.lockEditing ?? false,
+      chartTitle: chartSettings?.chartTitle,
     },
-    processMessages.encodingFailed,
-    options.chartSettings?.saveMetadata ?? true,
+    processMessages,
+    (chartSettings?.saveMetadata ?? true) || (chartSettings?.lockEditing ?? false),
   );
   return {
     blob,
@@ -653,16 +694,23 @@ async function buildChartBlobWithMetadata(
     gridWidth: number;
     gridHeight: number;
     preferredEditorMode: "edit" | "pindou";
+    editingLocked?: boolean;
+    chartTitle?: string;
   },
-  encodingFailedMessage: string,
+  processMessages: ProcessMessages,
   includeMetadata = true,
 ) {
-  const baseBlob = await canvasToBlob(canvas, encodingFailedMessage);
+  const baseBlob = await canvasToBlob(canvas, processMessages.encodingFailed);
   if (!includeMetadata) {
     return baseBlob;
   }
-  const metadata = buildEmbeddedChartMetadata(metadataInput);
-  return embedChartMetadataInPngBlob(baseBlob, metadata);
+
+  try {
+    const metadata = buildEmbeddedChartMetadata(metadataInput);
+    return embedChartMetadataInPngBlob(baseBlob, metadata);
+  } catch (error) {
+    throw mapChartSerializationError(error, processMessages);
+  }
 }
 
 async function tryLoadEmbeddedChartResult(file: File): Promise<ProcessResult | null> {
@@ -706,13 +754,16 @@ async function tryLoadEmbeddedChartResult(file: File): Promise<ProcessResult | n
 
   const colors = summarizeCells(cells, paletteDefinition);
   const uniqueColors = colors.length;
+  const editingLocked = metadata.editingLocked ?? false;
   return {
     blob: file,
     fileName: defaultOutputName(file.name, metadata.gridWidth, metadata.gridHeight),
     colorSystemId: paletteDefinition.id,
+    chartTitle: metadata.chartTitle,
     detectionMode: "embedded-chart-metadata",
     effectiveReduceColors: true,
-    preferredEditorMode: metadata.preferredEditorMode ?? "pindou",
+    preferredEditorMode: editingLocked ? "pindou" : (metadata.preferredEditorMode ?? "pindou"),
+    editingLocked,
     detectedCropRect: null,
     gridWidth: metadata.gridWidth,
     gridHeight: metadata.gridHeight,
@@ -731,6 +782,8 @@ function buildEmbeddedChartMetadata(input: {
   gridWidth: number;
   gridHeight: number;
   preferredEditorMode: "edit" | "pindou";
+  editingLocked?: boolean;
+  chartTitle?: string;
 }): EmbeddedChartMetadata {
   return {
     version: CHART_METADATA_VERSION,
@@ -740,14 +793,61 @@ function buildEmbeddedChartMetadata(input: {
     gridWidth: input.gridWidth,
     gridHeight: input.gridHeight,
     preferredEditorMode: input.preferredEditorMode,
-    cells: input.cells.map((cell) => {
-      const normalized = normalizeEditableCell(cell);
-      if (!normalized.label) {
-        return null;
-      }
-      return [normalized.label, normalized.source === "manual" ? 1 : 0];
-    }),
+    editingLocked: input.editingLocked ?? false,
+    chartTitle: input.chartTitle?.trim() || undefined,
+    cells: buildSerializedChartCells(input.cells),
   };
+}
+
+function buildSerializedChartCells(cells: EditableCell[]): Array<[string, 1 | 0] | null> {
+  return cells.map((cell) => {
+    const normalized = normalizeEditableCell(cell);
+    if (!normalized.label) {
+      return null;
+    }
+    return [normalized.label, normalized.source === "manual" ? 1 : 0];
+  });
+}
+
+function serializeCompactChartPayload(
+  input: {
+    cells: EditableCell[];
+    colorSystemId: string;
+    gridWidth: number;
+    gridHeight: number;
+    preferredEditorMode?: "edit" | "pindou";
+    editingLocked?: boolean;
+    title?: string;
+  },
+  options: {
+    includeManualRuns: boolean;
+    includePreferredEditorMode: boolean;
+  },
+  processMessages: ProcessMessages,
+) {
+  try {
+    return serializeChartPayload(
+      {
+        colorSystemId: input.colorSystemId,
+        gridWidth: input.gridWidth,
+        gridHeight: input.gridHeight,
+        preferredEditorMode: input.preferredEditorMode,
+        editingLocked: input.editingLocked,
+        title: input.title,
+        cells: buildSerializedChartCells(input.cells),
+      },
+      options,
+    );
+  } catch (error) {
+    throw mapChartSerializationError(error, processMessages);
+  }
+}
+
+function mapChartSerializationError(error: unknown, processMessages: ProcessMessages) {
+  if (error instanceof ChartSerializationError && error.code === "too-many-colors") {
+    return new Error(processMessages.chartSerializationTooManyColors);
+  }
+  return error instanceof Error ? error : new Error(processMessages.encodingFailed);
 }
 
 function buildExportChartTitle(
@@ -1898,10 +1998,13 @@ async function renderChart(
   title: string,
   metaLine: string,
   canvasContextUnavailableMessage: string,
+  chartQrTooLargeMessage: string,
+  chartQrCaptionMessage: string,
   chartSettings?: ChartExportSettings,
 ) {
   const includeGuides = chartSettings?.includeGuides ?? true;
   const includeLegend = chartSettings?.includeLegend ?? true;
+  const includeQrCode = chartSettings?.includeQrCode ?? false;
   const includeBoardPattern = chartSettings?.includeBoardPattern ?? false;
   const boardTheme = chartSettings?.boardTheme ?? "gray";
   const cellGap = Math.max(1, Math.floor(cellSize / 18));
@@ -1929,6 +2032,35 @@ async function renderChart(
   const legendSwatchHeight = Math.max(46, Math.floor(cellSize * 1.08));
   const legendTileHeight = legendSwatchHeight + Math.max(30, Math.floor(cellSize * 0.82));
   const legendGap = Math.max(10, Math.floor(cellSize / 4));
+  const qrCardPadding = Math.max(24, Math.floor(cellSize * 0.64));
+  const qrSize = includeQrCode ? Math.max(232, Math.floor(cellSize * 7.8)) : 0;
+  const qrCaption = chartQrCaptionMessage.trim();
+  const qrCaptionFontSize = includeQrCode ? Math.max(15, Math.floor(cellSize * 0.46)) : 0;
+  const qrCaptionGap = qrCaption ? Math.max(12, Math.floor(cellSize * 0.34)) : 0;
+  const qrCaptionBlockHeight = qrCaption ? qrCaptionFontSize + qrCaptionGap : 0;
+  const qrBoardPlacement =
+    includeQrCode && chartSettings?.shareUrl
+      ? findChartQrBoardPlacement(
+          cells,
+          gridWidth,
+          gridHeight,
+          cellSize,
+          qrSize,
+          qrCaptionBlockHeight,
+        )
+      : null;
+  const renderQrBelowBoard = includeQrCode && !qrBoardPlacement;
+  const qrCardWidth =
+    qrSize > 0 && renderQrBelowBoard
+      ? Math.max(
+          qrSize + qrCardPadding * 2,
+          qrSize + Math.max(120, Math.floor(cellSize * 6)),
+        )
+      : 0;
+  const qrCardHeight =
+    qrSize > 0 && renderQrBelowBoard
+      ? qrSize + qrCardPadding * 2 + qrCaptionBlockHeight
+      : 0;
 
   const baseCanvasWidth = Math.max(boardBlockWidth + canvasPadding * 2, 900);
   const itemsPerRow = Math.max(
@@ -1940,10 +2072,13 @@ async function renderChart(
     legendRows * legendTileHeight + Math.max(0, legendRows - 1) * legendGap;
   const legendSectionHeight = includeLegend ? legendHeight : 0;
   const legendSectionGap = includeLegend ? titleGap : 0;
+  const qrSectionHeight = renderQrBelowBoard ? qrCardHeight : 0;
+  const qrSectionGap = renderQrBelowBoard ? titleGap : 0;
 
   const canvasWidth = Math.max(
     baseCanvasWidth,
     itemsPerRow * legendTileWidth + Math.max(0, itemsPerRow - 1) * legendGap + canvasPadding * 2,
+    qrCardWidth + canvasPadding * 2,
   );
   const canvasHeight =
     canvasPadding +
@@ -1955,6 +2090,8 @@ async function renderChart(
     boardBlockHeight +
     legendSectionGap +
     legendSectionHeight +
+    qrSectionGap +
+    qrSectionHeight +
     canvasPadding;
 
   const canvas = document.createElement("canvas");
@@ -2131,6 +2268,45 @@ async function renderChart(
     chartSettings,
   );
 
+  if (qrBoardPlacement && chartSettings?.shareUrl) {
+    const regionSize = qrBoardPlacement.cellSpan * cellSize;
+    const regionX = boardInnerX + qrBoardPlacement.cellLeft * cellSize;
+    const regionY = boardInnerY + qrBoardPlacement.cellTop * cellSize;
+    await drawChartQrCode(
+      context,
+      {
+        x: Math.round(regionX + (regionSize - qrBoardPlacement.cardWidth) / 2),
+        y: Math.round(regionY + (regionSize - qrBoardPlacement.cardHeight) / 2),
+        cardWidth: qrBoardPlacement.cardWidth,
+        cardHeight: qrBoardPlacement.cardHeight,
+        cardPadding: qrBoardPlacement.cardPadding,
+        qrSize: qrBoardPlacement.qrSize,
+        caption: qrCaption,
+        captionFontSize: qrCaptionFontSize,
+      },
+      chartSettings.shareUrl,
+      chartQrTooLargeMessage,
+    );
+  } else if (renderQrBelowBoard && chartSettings?.shareUrl) {
+    const qrTop =
+      boardBlockY + boardBlockHeight + legendSectionGap + legendSectionHeight + qrSectionGap;
+    await drawChartQrCode(
+      context,
+      {
+        x: Math.round((canvasWidth - qrCardWidth) / 2),
+        y: Math.round(qrTop),
+        cardWidth: qrCardWidth,
+        cardHeight: qrCardHeight,
+        cardPadding: qrCardPadding,
+        qrSize,
+        caption: qrCaption,
+        captionFontSize: qrCaptionFontSize,
+      },
+      chartSettings.shareUrl,
+      chartQrTooLargeMessage,
+    );
+  }
+
   return canvas;
 }
 
@@ -2199,6 +2375,254 @@ async function drawChartWatermark(
   context.restore();
 }
 
+async function drawChartQrCode(
+  context: CanvasRenderingContext2D,
+  placement: {
+    x: number;
+    y: number;
+    cardWidth: number;
+    cardHeight: number;
+    cardPadding: number;
+    qrSize: number;
+    caption: string;
+    captionFontSize: number;
+  },
+  shareUrl: string,
+  chartQrTooLargeMessage: string,
+) {
+  const {
+    x: cardX,
+    y: cardY,
+    cardWidth,
+    cardHeight,
+    cardPadding,
+    qrSize,
+    caption,
+    captionFontSize,
+  } = placement;
+  const qrImage = await loadChartQrCodeImage(shareUrl, qrSize, chartQrTooLargeMessage);
+  if (!qrImage) {
+    throw new Error(chartQrTooLargeMessage);
+  }
+
+  const resolvedCaptionFontSize = caption
+    ? resolveQrCaptionFontSize(
+        context,
+        caption,
+        captionFontSize,
+        Math.max(48, cardWidth - cardPadding * 2),
+      )
+    : 0;
+  const captionGap = caption ? Math.max(12, Math.floor(cardPadding * 0.45)) : 0;
+  const captionBlockHeight = caption ? resolvedCaptionFontSize + captionGap : 0;
+  const qrX = cardX + Math.round((cardWidth - qrSize) / 2);
+  const qrY = cardY + cardPadding + captionBlockHeight;
+
+  context.save();
+  context.beginPath();
+  context.roundRect(
+    cardX,
+    cardY,
+    cardWidth,
+    cardHeight,
+    Math.max(12, Math.floor(Math.max(cardWidth, cardHeight) * 0.06)),
+  );
+  context.fillStyle = "#FFFFFF";
+  context.fill();
+  context.lineWidth = 2;
+  context.strokeStyle = "rgba(17,17,17,0.12)";
+  context.stroke();
+
+  if (caption) {
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.font = buildFont(resolvedCaptionFontSize, true, false);
+    context.fillStyle = "#2C2C2C";
+    context.fillText(
+      caption,
+      cardX + cardWidth / 2,
+      cardY + cardPadding + resolvedCaptionFontSize / 2,
+    );
+  }
+
+  context.imageSmoothingEnabled = false;
+  context.drawImage(
+    qrImage,
+    qrX,
+    qrY,
+    qrSize,
+    qrSize,
+  );
+  context.restore();
+}
+
+function resolveQrCaptionFontSize(
+  context: CanvasRenderingContext2D,
+  caption: string,
+  preferredFontSize: number,
+  maxWidth: number,
+) {
+  let fontSize = Math.max(11, preferredFontSize);
+  while (fontSize > 11) {
+    context.font = buildFont(fontSize, true, false);
+    if (context.measureText(caption).width <= maxWidth) {
+      return fontSize;
+    }
+    fontSize -= 1;
+  }
+  return 11;
+}
+
+export function findChartQrBoardPlacement(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+  cellSize: number,
+  preferredQrSize: number,
+  captionBlockHeight = 0,
+): ChartQrBoardPlacement | null {
+  if (
+    gridWidth <= 0 ||
+    gridHeight <= 0 ||
+    cellSize <= 0 ||
+    preferredQrSize <= 0 ||
+    cells.length !== gridWidth * gridHeight
+  ) {
+    return null;
+  }
+
+  const normalizedCells = cells.map((cell) => normalizeEditableCell(cell));
+  const minQrSize = Math.max(160, Math.floor(cellSize * 5));
+  const cardPadding = Math.max(10, Math.floor(cellSize * 0.28));
+  const minSpan = Math.ceil((minQrSize + cardPadding * 2 + Math.max(0, captionBlockHeight)) / cellSize);
+  const occupiedPrefix = buildOccupiedPrefixSum(normalizedCells, gridWidth, gridHeight);
+  const cornerAnchors = [
+    { key: "top-left", cellLeft: 0, cellTop: 0, priority: 0 },
+    { key: "top-right", cellLeft: 0, cellTop: 0, priority: 1 },
+    { key: "bottom-left", cellLeft: 0, cellTop: 0, priority: 2 },
+    { key: "bottom-right", cellLeft: 0, cellTop: 0, priority: 3 },
+  ] as const;
+  let best:
+    | (ChartQrBoardPlacement & {
+        supportsPreferred: boolean;
+        priority: number;
+      })
+    | null = null;
+
+  for (const anchor of cornerAnchors) {
+    const maxSpan = Math.min(gridWidth, gridHeight);
+    for (let span = maxSpan; span >= minSpan; span -= 1) {
+      const cellLeft =
+        anchor.key === "top-right" || anchor.key === "bottom-right"
+          ? gridWidth - span
+          : 0;
+      const cellTop =
+        anchor.key === "bottom-left" || anchor.key === "bottom-right"
+          ? gridHeight - span
+          : 0;
+      const regionSize = span * cellSize;
+      const maxQrSize = regionSize - cardPadding * 2 - Math.max(0, captionBlockHeight);
+      if (maxQrSize < minQrSize) {
+        continue;
+      }
+      if (!isPrefixSquareEmpty(occupiedPrefix, gridWidth, cellLeft, cellTop, span)) {
+        continue;
+      }
+
+      const supportsPreferred = maxQrSize >= preferredQrSize;
+      const qrSize = supportsPreferred ? preferredQrSize : maxQrSize;
+      const candidate = {
+        cellLeft,
+        cellTop,
+        cellSpan: span,
+        cardWidth: regionSize,
+        cardHeight: qrSize + cardPadding * 2 + Math.max(0, captionBlockHeight),
+        cardPadding,
+        qrSize,
+        supportsPreferred,
+        priority: anchor.priority,
+      };
+
+      if (!best) {
+        best = candidate;
+        break;
+      }
+      if (candidate.supportsPreferred !== best.supportsPreferred) {
+        if (candidate.supportsPreferred) {
+          best = candidate;
+        }
+        break;
+      }
+      if (candidate.qrSize > best.qrSize + 0.5) {
+        best = candidate;
+        break;
+      }
+      if (
+        Math.abs(candidate.qrSize - best.qrSize) <= 0.5 &&
+        candidate.priority < best.priority
+      ) {
+        best = candidate;
+      }
+      break;
+    }
+  }
+
+  return best
+    ? {
+        cellLeft: best.cellLeft,
+        cellTop: best.cellTop,
+        cellSpan: best.cellSpan,
+        cardWidth: best.cardWidth,
+        cardHeight: best.cardHeight,
+        cardPadding: best.cardPadding,
+        qrSize: best.qrSize,
+      }
+    : null;
+}
+
+function buildOccupiedPrefixSum(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+) {
+  const prefix = new Uint32Array((gridWidth + 1) * (gridHeight + 1));
+
+  for (let row = 0; row < gridHeight; row += 1) {
+    let rowOccupied = 0;
+    for (let column = 0; column < gridWidth; column += 1) {
+      const index = row * gridWidth + column;
+      const cell = cells[index];
+      if (cell?.label || cell?.hex) {
+        rowOccupied += 1;
+      }
+      const prefixIndex = (row + 1) * (gridWidth + 1) + (column + 1);
+      prefix[prefixIndex] = prefix[row * (gridWidth + 1) + (column + 1)] + rowOccupied;
+    }
+  }
+
+  return prefix;
+}
+
+function isPrefixSquareEmpty(
+  prefix: Uint32Array,
+  gridWidth: number,
+  cellLeft: number,
+  cellTop: number,
+  span: number,
+) {
+  const stride = gridWidth + 1;
+  const left = cellLeft;
+  const top = cellTop;
+  const right = cellLeft + span;
+  const bottom = cellTop + span;
+  const occupied =
+    prefix[bottom * stride + right] -
+    prefix[top * stride + right] -
+    prefix[bottom * stride + left] +
+    prefix[top * stride + left];
+  return occupied === 0;
+}
+
 function loadChartDecorationImage(src: string) {
   return new Promise<HTMLImageElement | null>((resolve) => {
     const image = new Image();
@@ -2207,6 +2631,27 @@ function loadChartDecorationImage(src: string) {
     image.onerror = () => resolve(null);
     image.src = src;
   });
+}
+
+async function loadChartQrCodeImage(
+  shareUrl: string,
+  size: number,
+  chartQrTooLargeMessage: string,
+) {
+  try {
+    const src = await QRCode.toDataURL(shareUrl, {
+      errorCorrectionLevel: "L",
+      margin: 3,
+      width: size,
+      color: {
+        dark: "#111111",
+        light: "#FFFFFF",
+      },
+    });
+    return loadChartDecorationImage(src);
+  } catch {
+    throw new Error(chartQrTooLargeMessage);
+  }
 }
 
 function drawBrandLogo(

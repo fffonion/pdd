@@ -21,6 +21,8 @@ export function ChartSettingsTab({
   onChartWatermarkImageClear,
   chartSaveMetadata,
   onChartSaveMetadataChange,
+  chartLockEditing,
+  onChartLockEditingChange,
   chartIncludeGuides,
   onChartIncludeGuidesChange,
   chartIncludeBoardPattern,
@@ -29,7 +31,12 @@ export function ChartSettingsTab({
   onChartBoardThemeChange,
   chartIncludeLegend,
   onChartIncludeLegendChange,
+  chartIncludeQrCode,
+  onChartIncludeQrCodeChange,
   chartPreviewUrl,
+  chartShareCode,
+  chartShareCodeCopied,
+  onCopyChartShareCode,
   chartPreviewBusy,
   onSaveChart,
   saveBusy,
@@ -46,6 +53,8 @@ export function ChartSettingsTab({
   onChartWatermarkImageClear: () => void;
   chartSaveMetadata: boolean;
   onChartSaveMetadataChange: (value: boolean) => void;
+  chartLockEditing: boolean;
+  onChartLockEditingChange: (value: boolean) => void;
   chartIncludeGuides: boolean;
   onChartIncludeGuidesChange: (value: boolean) => void;
   chartIncludeBoardPattern: boolean;
@@ -54,7 +63,12 @@ export function ChartSettingsTab({
   onChartBoardThemeChange: (value: PindouBoardTheme) => void;
   chartIncludeLegend: boolean;
   onChartIncludeLegendChange: (value: boolean) => void;
+  chartIncludeQrCode: boolean;
+  onChartIncludeQrCodeChange: (value: boolean) => void;
   chartPreviewUrl: string | null;
+  chartShareCode: string;
+  chartShareCodeCopied: boolean;
+  onCopyChartShareCode: () => void | Promise<void>;
   chartPreviewBusy: boolean;
   onSaveChart: () => void | Promise<void>;
   saveBusy: boolean;
@@ -66,8 +80,14 @@ export function ChartSettingsTab({
     isDark ? "border-white/12 bg-white/[0.035]" : "border-stone-300 bg-white/78",
   );
   const chartPreviewClassName = clsx(
-    "relative flex h-[min(44svh,420px)] min-h-[220px] items-center justify-center overflow-hidden rounded-md border p-2 sm:h-[min(50svh,520px)] sm:min-h-[280px] sm:p-3 xl:h-auto xl:min-h-[360px]",
+    "relative flex min-h-[260px] items-center justify-center overflow-hidden rounded-md border p-2 sm:min-h-[320px] sm:p-3 xl:min-h-0 xl:flex-[2_1_0%]",
     isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78",
+  );
+  const chartCodeFieldClassName = clsx(
+    "rounded-md border px-3 py-2 shadow-inner transition",
+    isDark
+      ? "border-white/10 bg-[#110d0b] text-stone-200"
+      : "border-stone-300 bg-[#f6efe2] text-stone-800",
   );
   const boardThemeLabels: Record<PindouBoardTheme, string> = {
     none: t.pindouBoardThemeNone ?? "无底纹",
@@ -78,9 +98,9 @@ export function ChartSettingsTab({
   };
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-auto">
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 px-3 py-3 sm:gap-5 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)]">
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <section className="flex w-full flex-col overflow-visible">
+      <div className="grid grid-cols-1 gap-4 px-3 py-3 sm:gap-5 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)] xl:items-stretch">
+        <div className="flex flex-col gap-4 xl:h-full xl:self-stretch">
           <label className="flex flex-col gap-2">
             <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsChartTitle}</span>
             <input
@@ -193,19 +213,52 @@ export function ChartSettingsTab({
 
           <div className={chartSectionClassName}>
             <SwitchRow
-              id="chart-save-metadata"
-              title={t.chartSettingsSaveMetadata}
-              description={t.chartSettingsSaveMetadataDescription}
-              checked={chartSaveMetadata}
-              onCheckedChange={onChartSaveMetadataChange}
+              id="chart-include-qr-code"
+              title={t.chartSettingsIncludeQrCode}
+              description={t.chartSettingsIncludeQrCodeDescription}
+              checked={chartIncludeQrCode}
+              onCheckedChange={onChartIncludeQrCodeChange}
               isDark={isDark}
             />
           </div>
 
-          <div className="mt-auto pt-2">
+          <div className={chartSectionClassName}>
+            <SwitchRow
+              id="chart-lock-editing"
+              title={t.chartSettingsLockEditing}
+              description={t.chartSettingsLockEditingDescription}
+              checked={chartLockEditing}
+              onCheckedChange={onChartLockEditingChange}
+              isDark={isDark}
+            />
+          </div>
+
+          <div className={clsx(chartSectionClassName, "xl:mt-auto")}>
+            <SwitchRow
+              id="chart-save-metadata"
+              title={t.chartSettingsSaveMetadata}
+              description={
+                chartLockEditing
+                  ? t.chartSettingsSaveMetadataLockedDescription
+                  : t.chartSettingsSaveMetadataDescription
+              }
+              checked={chartSaveMetadata}
+              onCheckedChange={onChartSaveMetadataChange}
+              isDark={isDark}
+              disabled={chartLockEditing}
+            />
+          </div>
+
+        </div>
+
+        <aside className="order-last flex flex-col gap-3 xl:h-full xl:self-stretch">
+          <div className="flex items-center justify-between gap-3">
+            <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+              {t.chartSettingsPreview}
+            </span>
             <button
               className={clsx(
-                "h-10 w-full rounded-md border px-4 text-sm font-semibold transition sm:w-auto",
+                "h-10 shrink-0 rounded-md border px-4 text-sm font-semibold transition",
                 !saveBusy && !chartPreviewBusy ? theme.primaryButton : theme.disabledButton,
               )}
               disabled={saveBusy || chartPreviewBusy}
@@ -215,12 +268,6 @@ export function ChartSettingsTab({
               {t.downloadPng}
             </button>
           </div>
-        </div>
-
-        <aside className="order-first flex min-h-0 flex-col gap-2 xl:order-last">
-          <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
-            {t.chartSettingsPreview}
-          </span>
           <div className={chartPreviewClassName}>
             {chartPreviewUrl ? (
               <img
@@ -248,6 +295,38 @@ export function ChartSettingsTab({
                 </div>
               </div>
             ) : null}
+          </div>
+          <div className={clsx("flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0 xl:flex-[1_1_0%]", isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78")}>
+            <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+              {t.chartSettingsChartCode}
+            </span>
+            <div
+              className={clsx(
+                "min-h-[160px] overflow-auto text-xs leading-5 xl:min-h-0 xl:flex-1",
+                chartCodeFieldClassName,
+              )}
+            >
+              <div className="break-all whitespace-normal">
+                {chartShareCode || t.chartSettingsChartCodePlaceholder}
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                className={clsx(
+                  "h-10 rounded-md border px-4 text-sm font-semibold transition-all duration-200",
+                  chartShareCode
+                    ? chartShareCodeCopied
+                      ? clsx(theme.primaryButton, "scale-[1.03] shadow-[0_6px_18px_rgba(120,72,18,0.14)]")
+                      : theme.primaryButton
+                    : theme.disabledButton,
+                )}
+                disabled={!chartShareCode}
+                onClick={() => void onCopyChartShareCode()}
+                type="button"
+              >
+                {chartShareCodeCopied ? t.chartSettingsCopyChartCodeCopied : t.chartSettingsCopyChartCode}
+              </button>
+            </div>
           </div>
         </aside>
       </div>
