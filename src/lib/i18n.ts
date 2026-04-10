@@ -13,18 +13,15 @@ export interface Messages {
   themeSystem: string;
   sourceTitle: string;
   sourceLandingTitle: string;
-  sourceSubtitle: string;
   sourcePrivacyNote: string;
   sourceLocalOnly: string;
   sourceChooseImage: string;
-  sourceStayInTab: string;
   sourceFocusView: string;
   sourceExitFocus: string;
   sourceChartBadge: string;
   sourcePixelArtBadge: string;
   sourceImageBadge: string;
   gridTitle: string;
-  gridSubtitle: string;
   colorSystemTitle: string;
   colorSystemSubtitle: string;
   gridAuto: string;
@@ -75,7 +72,6 @@ export interface Messages {
   chartSettingsIncludeGuides: string;
   chartSettingsIncludeGuidesDescription: string;
   chartSettingsIncludeBoardPattern: string;
-  chartSettingsIncludeBoardPatternDescription: string;
   chartSettingsIncludeLegend: string;
   chartSettingsIncludeLegendDescription: string;
   pindouModeHint: string;
@@ -107,7 +103,6 @@ export interface Messages {
   selectedColor: string;
   emptyPixel: string;
   paletteTitle: string;
-  paletteHint: string;
   paletteFilterPlaceholder: string;
   pixelEditorHint: string;
   overlayToggle: string;
@@ -154,18 +149,15 @@ export const messages: Record<Locale, Messages> = {
     themeSystem: "跟随系统",
     sourceTitle: "原图",
     sourceLandingTitle: "导入图片，或导入现有图纸",
-    sourceSubtitle: "",
     sourcePrivacyNote: "全部处理都在浏览器内完成，不会上传到服务器。",
     sourceLocalOnly: "本地图片",
     sourceChooseImage: "选择图片",
-    sourceStayInTab: "",
     sourceFocusView: "放大原图",
     sourceExitFocus: "关闭放大原图",
     sourceChartBadge: "图纸",
     sourcePixelArtBadge: "像素图",
     sourceImageBadge: "图片",
-    gridTitle: "网格策略",
-    gridSubtitle: "自动识别像素画，或手动指定网格后先像素化。",
+    gridTitle: "图片处理",
     colorSystemTitle: "色系",
     colorSystemSubtitle: "选择要匹配的拼豆色系。",
     gridAuto: "自动识别",
@@ -199,9 +191,9 @@ export const messages: Record<Locale, Messages> = {
     downloadPng: "导出图纸",
     editorTitle: "像素编辑",
     editorSubtitle: "点击格子可改色，或删除、补上任意像素。",
-    editorTabEdit: "像素编辑",
-    editorTabPindou: "拼豆模式",
-    editorTabChartSettings: "导出设置",
+    editorTabEdit: "画图图",
+    editorTabPindou: "拼豆豆",
+    editorTabChartSettings: "导出出",
     chartSettingsChartTitle: "图纸标题",
     chartSettingsChartTitlePlaceholder: "拼豆图纸",
     chartSettingsPreview: "预览图",
@@ -216,7 +208,6 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsIncludeGuides: "添加参考线",
     chartSettingsIncludeGuidesDescription: "关闭后会同时隐藏 5/10 格参考线和坐标数字。",
     chartSettingsIncludeBoardPattern: "添加底纹",
-    chartSettingsIncludeBoardPatternDescription: "",
     chartSettingsIncludeLegend: "添加色卡",
     chartSettingsIncludeLegendDescription: "控制图纸底部的颜色详情和数量统计。",
     pindouModeHint: "点击颜色或图纸格子，可单独高亮一种颜色。",
@@ -242,7 +233,6 @@ export const messages: Record<Locale, Messages> = {
     selectedColor: "当前颜色",
     emptyPixel: "空像素",
     paletteTitle: "调色板",
-    paletteHint: "",
     paletteFilterPlaceholder: "输入色号筛选",
     pixelEditorHint: "支持点击和拖动连续修改。",
     overlayToggle: "原图叠加",
@@ -289,18 +279,15 @@ export const messages: Record<Locale, Messages> = {
     themeSystem: "System",
     sourceTitle: "Source Image",
     sourceLandingTitle: "Import an image or an existing chart",
-    sourceSubtitle: "",
     sourcePrivacyNote: "Everything is processed in the browser and is not uploaded to a server.",
     sourceLocalOnly: "Local image",
     sourceChooseImage: "Import image",
-    sourceStayInTab: "",
     sourceFocusView: "????",
     sourceExitFocus: "??????",
     sourceChartBadge: "Chart",
     sourcePixelArtBadge: "Pixel Art",
     sourceImageBadge: "Image",
     gridTitle: "Grid Strategy",
-    gridSubtitle: "Auto-detect pixel art, or provide a manual grid and pixelate first.",
     colorSystemTitle: "Color System",
     colorSystemSubtitle: "Choose the bead color system used for matching.",
     gridAuto: "Auto Detect",
@@ -351,7 +338,6 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsIncludeGuides: "Show Guides",
     chartSettingsIncludeGuidesDescription: "Turning this off also hides axis labels and 5/10-grid guide lines.",
     chartSettingsIncludeBoardPattern: "Show Board Pattern",
-    chartSettingsIncludeBoardPatternDescription: "",
     chartSettingsIncludeLegend: "Show Legend",
     chartSettingsIncludeLegendDescription: "Controls the color list and counts at the bottom of the exported chart.",
     pindouModeHint: "Click a color or a grid cell to highlight a single color.",
@@ -379,7 +365,6 @@ export const messages: Record<Locale, Messages> = {
     selectedColor: "Selected Color",
     emptyPixel: "Empty Pixel",
     paletteTitle: "Palette",
-    paletteHint: "Pick a color first, then click cells on the grid.",
     paletteFilterPlaceholder: "Filter by color label",
     pixelEditorHint: "Click or drag to edit continuously.",
     overlayToggle: "Original Overlay",

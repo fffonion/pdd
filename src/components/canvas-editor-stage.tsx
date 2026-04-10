@@ -721,7 +721,9 @@ export function CanvasEditorStage({
       className={clsx(
         "relative flex h-full min-h-0 w-full min-w-0 max-w-full flex-1 touch-none",
         embeddedInPanel
-          ? "rounded-none border-0 p-2 sm:p-3"
+          ? stageMode === "pindou"
+            ? "rounded-none border-0 p-1.5 sm:p-2"
+            : "rounded-none border-0 p-2 sm:p-3"
           : "rounded-[10px] border p-2 sm:p-3",
         embeddedInPanel ? "mt-0" : focusOnly ? "mt-0" : "mt-4",
         "overflow-hidden",

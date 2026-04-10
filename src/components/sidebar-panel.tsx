@@ -78,7 +78,6 @@ export function SidebarPanel({
     return {
       source: false,
       grid: isMobile,
-      polish: isMobile,
     };
   });
 
@@ -104,7 +103,6 @@ export function SidebarPanel({
           busy={busy}
           emptyText={t.sourceEmpty}
           sourceChooseImage={t.sourceChooseImage}
-          sourceStayInTab={t.sourceStayInTab}
           sourceFocusView={t.sourceFocusView}
           sourceExitFocus={t.sourceExitFocus}
           sourceBadge={sourceBadge}
@@ -125,7 +123,6 @@ export function SidebarPanel({
 
         <CollapsibleSection
           title={t.gridTitle}
-          subtitle={t.gridSubtitle}
           collapsed={collapsedSections.grid}
           onToggle={() => toggleSection("grid")}
           isDark={isDark}
@@ -185,15 +182,7 @@ export function SidebarPanel({
               </div>
             </Tabs.Content>
           </Tabs.Root>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title={t.polishTitle}
-          collapsed={collapsedSections.polish}
-          onToggle={() => toggleSection("polish")}
-          isDark={isDark}
-        >
-          <div className="space-y-4">
+          <div className="mt-5 space-y-4">
             <SwitchRow
               id="reduce-colors"
               title={t.reduceColorsTitle}

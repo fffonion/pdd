@@ -1527,11 +1527,6 @@ export default function App() {
             <h2 className={clsx("mt-5 text-2xl font-semibold sm:text-3xl", theme.cardTitle)}>
               {t.sourceLandingTitle}
             </h2>
-            {t.sourceSubtitle ? (
-              <p className={clsx("mt-2 text-xs sm:text-sm", theme.cardMuted)}>
-                {t.sourceSubtitle}
-              </p>
-            ) : null}
             {t.sourcePrivacyNote ? (
               <p className={clsx("mt-2 text-xs", theme.cardMuted)}>
                 {t.sourcePrivacyNote}
@@ -1698,7 +1693,6 @@ export default function App() {
               busy={busy}
               emptyText={t.sourceEmpty}
               sourceChooseImage={t.sourceChooseImage}
-              sourceStayInTab={t.sourceStayInTab}
               sourceFocusView={t.sourceFocusView}
               sourceExitFocus={t.sourceExitFocus}
               sourceBadge={sourceBadge}

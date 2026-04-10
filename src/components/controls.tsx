@@ -240,7 +240,7 @@ export function SwitchRow({
 }: {
   id: string;
   title: string;
-  description: string;
+  description?: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   isDark: boolean;
@@ -252,7 +252,9 @@ export function SwitchRow({
         <Label.Root className={clsx("text-sm font-semibold", theme.cardTitle)} htmlFor={id}>
           {title}
         </Label.Root>
-        <p className={clsx("mt-1 text-xs leading-5", theme.cardMuted)}>{description}</p>
+        {description ? (
+          <p className={clsx("mt-1 text-xs leading-5", theme.cardMuted)}>{description}</p>
+        ) : null}
       </div>
       <Switch.Root
         id={id}

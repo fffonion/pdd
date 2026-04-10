@@ -375,7 +375,6 @@ export function PixelEditorPanel({
               {label}
             </Tabs.Trigger>
           ))}
-          <div aria-hidden="true" className="min-w-3 flex-1" />
           <Tabs.Trigger
             className={topTabClassName(panelMode === "chart")}
             value="chart"
@@ -383,19 +382,6 @@ export function PixelEditorPanel({
             {t.editorTabChartSettings}
           </Tabs.Trigger>
         </Tabs.List>
-        <div className="flex shrink-0 items-end gap-1">
-          <button
-            className={clsx(
-              "shrink-0 rounded-t-[10px] border px-4 py-2 text-sm font-semibold transition",
-              resultReady && !saveBusy && !busy ? theme.primaryButton : theme.disabledButton,
-            )}
-            disabled={!resultReady || saveBusy || busy}
-            onClick={() => void onSaveChart()}
-            type="button"
-          >
-            {t.downloadPng}
-          </button>
-        </div>
       </div>
 
       <section
@@ -594,6 +580,8 @@ export function PixelEditorPanel({
             onChartIncludeLegendChange={onChartIncludeLegendChange}
             chartPreviewUrl={chartPreviewUrl}
             chartPreviewBusy={chartPreviewBusy}
+            onSaveChart={onSaveChart}
+            saveBusy={saveBusy || busy || !resultReady}
           />
         </Tabs.Content>
       </section>
@@ -1657,7 +1645,6 @@ function ContextToolStrip({
             <FlipHorizontal className="h-4 w-4" />
           </button>
         ) : null}
-        <span className={clsx("ml-auto hidden shrink-0 text-xs xl:inline", theme.cardMuted)}>{t.paletteHint}</span>
       </div>
 
       {showPalette && pickerOpen && popupStyle ? (

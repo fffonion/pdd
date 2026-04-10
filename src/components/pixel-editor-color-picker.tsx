@@ -141,9 +141,7 @@ export function ColorPickerPanel({
               </g>
             ))}
           </svg>
-        ) : (
-          <p className={clsx("px-2 py-3 text-sm", theme.cardMuted)}>{t.paletteHint}</p>
-        )}
+        ) : null}
       </div>
     </div>
   );

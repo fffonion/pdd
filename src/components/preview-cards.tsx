@@ -39,7 +39,6 @@ export function OriginalPreviewCard({
   busy,
   emptyText,
   sourceChooseImage,
-  sourceStayInTab,
   sourceFocusView,
   sourceExitFocus,
   sourceBadge,
@@ -64,7 +63,6 @@ export function OriginalPreviewCard({
   busy: boolean;
   emptyText: string;
   sourceChooseImage: string;
-  sourceStayInTab: string;
   sourceFocusView: string;
   sourceExitFocus: string;
   sourceBadge?: { kind: "chart" | "pixel-art" | "image"; label: string } | null;
@@ -321,9 +319,6 @@ export function OriginalPreviewCard({
             <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
               {sourceChooseImage}
             </span>
-            {sourceStayInTab ? (
-              <span className={clsx("mt-2 text-xs", theme.cardMuted)}>{sourceStayInTab}</span>
-            ) : null}
           </label>
         ) : null}
       </div>

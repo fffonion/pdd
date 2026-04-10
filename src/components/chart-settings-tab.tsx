@@ -31,6 +31,8 @@ export function ChartSettingsTab({
   onChartIncludeLegendChange,
   chartPreviewUrl,
   chartPreviewBusy,
+  onSaveChart,
+  saveBusy,
 }: {
   t: Messages;
   isDark: boolean;
@@ -54,6 +56,8 @@ export function ChartSettingsTab({
   onChartIncludeLegendChange: (value: boolean) => void;
   chartPreviewUrl: string | null;
   chartPreviewBusy: boolean;
+  onSaveChart: () => void | Promise<void>;
+  saveBusy: boolean;
 }) {
   const theme = getThemeClasses(isDark);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -160,7 +164,6 @@ export function ChartSettingsTab({
               <SwitchRow
                 id="chart-include-board-pattern"
                 title={t.chartSettingsIncludeBoardPattern}
-                description={t.chartSettingsIncludeBoardPatternDescription}
                 checked={chartIncludeBoardPattern}
                 onCheckedChange={onChartIncludeBoardPatternChange}
                 isDark={isDark}
@@ -198,10 +201,26 @@ export function ChartSettingsTab({
               isDark={isDark}
             />
           </div>
+
+          <div className="mt-auto pt-2">
+            <button
+              className={clsx(
+                "h-10 rounded-md border px-4 text-sm font-semibold transition",
+                !saveBusy && !chartPreviewBusy ? theme.primaryButton : theme.disabledButton,
+              )}
+              disabled={saveBusy || chartPreviewBusy}
+              onClick={() => void onSaveChart()}
+              type="button"
+            >
+              {t.downloadPng}
+            </button>
+          </div>
         </div>
 
         <aside className="flex min-h-0 flex-col gap-2">
-          <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsPreview}</span>
+          <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+            {t.chartSettingsPreview}
+          </span>
           <div className={chartPreviewClassName}>
             {chartPreviewUrl ? (
               <img
