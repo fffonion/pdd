@@ -1,6 +1,8 @@
-﻿import {
+﻿import QRCode from "qrcode";
+import {
   detectAutoRasterWithWasm,
   detectChartBoardWithWasm,
+  enhanceEdgesWithFftWasm,
   type WasmAutoDetection,
 } from "./detecter";
 import { createEmbeddedChartQrDataUrl } from "./chart-qr";
@@ -34,7 +36,7 @@ type CropBox = [number, number, number, number];
 type Rgb = [number, number, number];
 type Oklab = [number, number, number];
 
-interface RasterImage {
+export interface RasterImage {
   width: number;
   height: number;
   data: Uint8ClampedArray;
@@ -44,7 +46,7 @@ const embeddedChartResultCache = new WeakMap<File, Promise<ProcessResult | null>
 const rasterCache = new WeakMap<File, Promise<RasterImage>>();
 const croppedRasterCache = new WeakMap<RasterImage, Map<string, RasterImage>>();
 const autoDetectionCache = new WeakMap<RasterImage, Promise<WasmAutoDetection | null>>();
-const logicalGridCache = new WeakMap<RasterImage, Map<string, RasterImage>>();
+const logicalGridCache = new WeakMap<RasterImage, Map<string, Promise<RasterImage>>>();
 
 interface PaletteColor {
   label: string;
@@ -69,6 +71,10 @@ export interface ProcessOptions {
   reduceTolerance: number;
   preSharpen: boolean;
   preSharpenStrength: number;
+  applyAutoFftEdgeEnhanceDefault?: boolean;
+  fftEdgeEnhance?: boolean;
+  fftEdgeEnhanceStrength?: number;
+  fftEdgeEnhanceOverrideLabel?: string | null;
   cellSize?: number;
   messages?: ProcessMessages;
 }
@@ -99,11 +105,17 @@ export interface ChartExportSettings {
   saveMetadata?: boolean;
   lockEditing?: boolean;
   includeGuides?: boolean;
+  showColorLabels?: boolean;
+  gaplessCells?: boolean;
   includeBoardPattern?: boolean;
   boardTheme?: PindouBoardTheme;
   includeLegend?: boolean;
   includeQrCode?: boolean;
   shareUrl?: string | null;
+}
+
+export interface ReduceColorsOptions {
+  preserveEdges?: boolean;
 }
 
 export interface ColorCount {
@@ -118,6 +130,19 @@ export interface EditableCell {
   source?: "detected" | "manual" | null;
 }
 
+interface CellTone {
+  rgb: Rgb;
+  luma: number;
+}
+
+interface OutlineBridgeCandidate {
+  support: number;
+  index: number;
+  luma: number;
+  cell: EditableCell;
+  mode: "horizontal" | "vertical" | "diag-desc" | "diag-asc";
+}
+
 export interface PaletteOption {
   label: string;
   hex: string;
@@ -130,6 +155,7 @@ export interface ProcessResult {
   chartTitle?: string;
   detectionMode: string;
   effectiveReduceColors: boolean;
+  effectiveFftEdgeEnhance: boolean;
   preferredEditorMode: "edit" | "pindou";
   editingLocked: boolean;
   detectedCropRect: NormalizedCropRect | null;
@@ -402,11 +428,11 @@ function getCachedAutoDetection(source: RasterImage) {
 function getCachedLogicalGrid(
   source: RasterImage,
   key: string,
-  build: () => RasterImage,
+  build: () => RasterImage | Promise<RasterImage>,
 ) {
   let cache = logicalGridCache.get(source);
   if (!cache) {
-    cache = new Map<string, RasterImage>();
+    cache = new Map<string, Promise<RasterImage>>();
     logicalGridCache.set(source, cache);
   }
 
@@ -415,7 +441,10 @@ function getCachedLogicalGrid(
     return existing;
   }
 
-  const logical = build();
+  const logical = Promise.resolve(build()).catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
   cache.set(key, logical);
   return logical;
 }
@@ -436,6 +465,8 @@ export async function processImageFile(
   const paletteDefinition = getPaletteDefinition(options.colorSystemId);
   const loadedSource = await getCachedFileRaster(file, processMessages.canvasContextUnavailable);
   const source = getCachedCropRaster(loadedSource, options.cropRect);
+  const fftEdgeEnhanceEnabled = options.fftEdgeEnhance ?? false;
+  const fftEdgeEnhanceStrength = options.fftEdgeEnhanceStrength ?? 30;
   let logical: RasterImage;
   let gridWidth: number;
   let gridHeight: number;
@@ -449,7 +480,7 @@ export async function processImageFile(
       throw new Error(processMessages.nonPixelArtError);
     }
 
-    logical = getCachedLogicalGrid(
+    logical = await getCachedLogicalGrid(
       source,
       `auto:${wasmDetection.kind}:${wasmDetection.cropBox.join(",")}:${wasmDetection.gridWidth}:${wasmDetection.gridHeight}`,
       () => sampleRegularGrid(
@@ -474,17 +505,21 @@ export async function processImageFile(
       throw new Error(processMessages.manualGridRequired);
     }
 
+    const manualFftEdgeEnhance =
+      options.applyAutoFftEdgeEnhanceDefault ? true : fftEdgeEnhanceEnabled;
     gridWidth = options.gridWidth;
     gridHeight = options.gridHeight;
-    logical = getCachedLogicalGrid(
+    logical = await getCachedLogicalGrid(
       source,
-      `manual:${gridWidth}:${gridHeight}:${options.preSharpen ? 1 : 0}:${options.preSharpenStrength}`,
+      `manual:v2:${gridWidth}:${gridHeight}:${options.preSharpen ? 1 : 0}:${options.preSharpenStrength}:${manualFftEdgeEnhance ? 1 : 0}:${fftEdgeEnhanceStrength}`,
       () => convertImageToLogicalGrid(
         source,
         gridWidth,
         gridHeight,
         options.preSharpen,
         options.preSharpenStrength,
+        manualFftEdgeEnhance,
+        fftEdgeEnhanceStrength,
       ),
     );
     detectionMode = "converted-from-image";
@@ -498,16 +533,42 @@ export async function processImageFile(
     gridHeight < 30
       ? false
       : options.reduceColors;
+  const effectiveFftEdgeEnhance = options.applyAutoFftEdgeEnhanceDefault
+    ? detectionMode === "converted-from-image"
+    : fftEdgeEnhanceEnabled;
 
   const originalUniqueColors = countUniqueColors(logical.data);
   let reducedUniqueColors = originalUniqueColors;
   if (effectiveReduceColors) {
-    const reduced = reduceColorsPhotoshopStyle(logical, options.reduceTolerance);
+    const reduced = reduceColorsPhotoshopStyle(logical, options.reduceTolerance, {
+      preserveEdges: detectionMode === "converted-from-image",
+    });
     logical = reduced.image;
     reducedUniqueColors = reduced.reducedUniqueColors;
   }
 
-  const matched = matchPalette(logical, paletteDefinition);
+  let matched = matchPalette(logical, paletteDefinition);
+  if (effectiveFftEdgeEnhance && detectionMode === "converted-from-image") {
+    const fftEdgeEnhanceOverrideColor =
+      options.fftEdgeEnhanceOverrideLabel
+        ? paletteDefinition.byLabel.get(options.fftEdgeEnhanceOverrideLabel) ?? null
+        : null;
+    matched = {
+      cells: enhancePixelOutlineContinuity(
+        matched.cells,
+        gridWidth,
+        gridHeight,
+        fftEdgeEnhanceStrength,
+        fftEdgeEnhanceOverrideColor
+          ? {
+              label: fftEdgeEnhanceOverrideColor.label,
+              hex: fftEdgeEnhanceOverrideColor.hex,
+              source: "detected",
+            }
+          : null,
+      ),
+    };
+  }
   const normalizedCells = collapseOpenBackgroundAreas(
     matched.cells,
     gridWidth,
@@ -549,6 +610,7 @@ export async function processImageFile(
     chartTitle: undefined,
     detectionMode,
     effectiveReduceColors,
+    effectiveFftEdgeEnhance,
     preferredEditorMode,
     editingLocked: false,
     detectedCropRect,
@@ -762,6 +824,7 @@ async function tryLoadEmbeddedChartResult(file: File): Promise<ProcessResult | n
     chartTitle: metadata.chartTitle,
     detectionMode: "embedded-chart-metadata",
     effectiveReduceColors: true,
+    effectiveFftEdgeEnhance: false,
     preferredEditorMode: editingLocked ? "pindou" : (metadata.preferredEditorMode ?? "pindou"),
     editingLocked,
     detectedCropRect: null,
@@ -1336,19 +1399,24 @@ function boxBlur(image: RasterImage): RasterImage {
   return { width: image.width, height: image.height, data };
 }
 
-function representativeColorFromPatch(
+export function representativeColorFromPatch(
   image: RasterImage,
   left: number,
   top: number,
   right: number,
   bottom: number,
 ): Rgb {
-  const buckets = new Map<number, { count: number; sum: [number, number, number] }>();
+  const patchWidth = Math.max(1, right - left);
+  const patchHeight = Math.max(1, bottom - top);
+  const bucketCodes = new Uint16Array(patchWidth * patchHeight);
+  const buckets = new Map<number, { count: number; sum: [number, number, number]; support: number }>();
   for (let y = top; y < bottom; y += 1) {
     for (let x = left; x < right; x += 1) {
       const pixel = getPixel(image, x, y);
-      const code = ((pixel[0] >> 4) << 8) | ((pixel[1] >> 4) << 4) | (pixel[2] >> 4);
-      const current = buckets.get(code) ?? { count: 0, sum: [0, 0, 0] };
+      const code = ((pixel[0] >> 3) << 10) | ((pixel[1] >> 3) << 5) | (pixel[2] >> 3);
+      const localIndex = (y - top) * patchWidth + (x - left);
+      bucketCodes[localIndex] = code;
+      const current = buckets.get(code) ?? { count: 0, sum: [0, 0, 0], support: 0 };
       current.count += 1;
       current.sum[0] += pixel[0];
       current.sum[1] += pixel[1];
@@ -1361,21 +1429,114 @@ function representativeColorFromPatch(
     return [255, 255, 255];
   }
 
-  let best: { count: number; sum: [number, number, number] } | null = null;
-  for (const bucket of buckets.values()) {
-    if (!best || bucket.count > best.count) {
-      best = bucket;
+  for (let y = 0; y < patchHeight; y += 1) {
+    for (let x = 0; x < patchWidth; x += 1) {
+      const code = bucketCodes[y * patchWidth + x]!;
+      const bucket = buckets.get(code);
+      if (!bucket) {
+        continue;
+      }
+
+      if (x + 1 < patchWidth && bucketCodes[y * patchWidth + x + 1] === code) {
+        bucket.support += 2;
+      }
+      if (y + 1 < patchHeight && bucketCodes[(y + 1) * patchWidth + x] === code) {
+        bucket.support += 2;
+      }
+      if (x + 1 < patchWidth && y + 1 < patchHeight && bucketCodes[(y + 1) * patchWidth + x + 1] === code) {
+        bucket.support += 1;
+      }
+      if (x > 0 && y + 1 < patchHeight && bucketCodes[(y + 1) * patchWidth + x - 1] === code) {
+        bucket.support += 1;
+      }
     }
   }
-  if (!best) {
+
+  let bestCode = -1;
+  let bestBucket: { count: number; sum: [number, number, number]; support: number } | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const [code, bucket] of buckets) {
+    const score = bucket.count * 4 + bucket.support;
+    if (
+      !bestBucket ||
+      score > bestScore ||
+      (score === bestScore && bucket.count > bestBucket.count)
+    ) {
+      bestCode = code;
+      bestBucket = bucket;
+      bestScore = score;
+    }
+  }
+  if (!bestBucket || bestCode === -1) {
     return [255, 255, 255];
   }
 
-  return [
-    clampToByte(best.sum[0] / best.count),
-    clampToByte(best.sum[1] / best.count),
-    clampToByte(best.sum[2] / best.count),
+  const mean: Rgb = [
+    clampToByte(bestBucket.sum[0] / bestBucket.count),
+    clampToByte(bestBucket.sum[1] / bestBucket.count),
+    clampToByte(bestBucket.sum[2] / bestBucket.count),
   ];
+  const centerX = (patchWidth - 1) / 2;
+  const centerY = (patchHeight - 1) / 2;
+  let bestPixel: Rgb | null = null;
+  let bestPixelSupport = Number.NEGATIVE_INFINITY;
+  let bestPixelDistance = Number.POSITIVE_INFINITY;
+  let bestPixelCenterDistance = Number.POSITIVE_INFINITY;
+
+  for (let y = 0; y < patchHeight; y += 1) {
+    for (let x = 0; x < patchWidth; x += 1) {
+      if (bucketCodes[y * patchWidth + x] !== bestCode) {
+        continue;
+      }
+
+      let localSupport = 0;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) {
+            continue;
+          }
+
+          const neighborX = x + dx;
+          const neighborY = y + dy;
+          if (
+            neighborX < 0 ||
+            neighborY < 0 ||
+            neighborX >= patchWidth ||
+            neighborY >= patchHeight ||
+            bucketCodes[neighborY * patchWidth + neighborX] !== bestCode
+          ) {
+            continue;
+          }
+
+          localSupport += dx === 0 || dy === 0 ? 2 : 1;
+        }
+      }
+
+      const pixel = getPixel(image, left + x, top + y);
+      const distance =
+        (pixel[0] - mean[0]) * (pixel[0] - mean[0]) +
+        (pixel[1] - mean[1]) * (pixel[1] - mean[1]) +
+        (pixel[2] - mean[2]) * (pixel[2] - mean[2]);
+      const centerDistance = (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY);
+      if (
+        !bestPixel ||
+        localSupport > bestPixelSupport ||
+        (localSupport === bestPixelSupport && distance < bestPixelDistance) ||
+        (
+          localSupport === bestPixelSupport &&
+          distance === bestPixelDistance &&
+          centerDistance < bestPixelCenterDistance
+        )
+      ) {
+        bestPixel = pixel;
+        bestPixelSupport = localSupport;
+        bestPixelDistance = distance;
+        bestPixelCenterDistance = centerDistance;
+      }
+    }
+  }
+
+  return bestPixel ?? mean;
 }
 
 function representativeColorFromChartPatch(
@@ -1524,14 +1685,19 @@ function sampleFixedSquareGrid(
   return { width: gridWidth, height: gridHeight, data };
 }
 
-function convertImageToLogicalGrid(
+async function convertImageToLogicalGrid(
   image: RasterImage,
   gridWidth: number,
   gridHeight: number,
   preSharpenEnabled: boolean,
   preSharpenStrength: number,
+  fftEdgeEnhanceEnabled: boolean,
+  fftEdgeEnhanceStrength: number,
 ) {
   let cropped = centerCropToRatio(image, gridWidth / gridHeight);
+  if (fftEdgeEnhanceEnabled) {
+    cropped = (await enhanceEdgesWithFftWasm(cropped, fftEdgeEnhanceStrength)) as RasterImage;
+  }
   if (preSharpenEnabled) {
     cropped = applySharpen(cropped, preSharpenStrength);
   }
@@ -1587,12 +1753,349 @@ function matchPalette(logical: RasterImage, paletteDefinition: PaletteDefinition
   return { cells };
 }
 
-function reduceColorsPhotoshopStyle(image: RasterImage, tolerance: number) {
+export function enhancePixelOutlineContinuity(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+  strength = 30,
+  overrideCell: EditableCell | null = null,
+) {
+  const normalizedCells = cells.map((cell) => normalizeEditableCell(cell));
+  if (gridWidth <= 0 || gridHeight <= 0 || normalizedCells.length !== gridWidth * gridHeight) {
+    return normalizedCells;
+  }
+
+  const strengthNorm = Math.max(0, Math.min(100, strength)) / 100;
+  const passes = 1;
+  const normalizedOverrideCell =
+    overrideCell?.label && overrideCell.hex
+      ? normalizeEditableCell({ ...overrideCell, source: "detected" })
+      : null;
+  let current = normalizedCells.map((cell) => ({ ...cell }));
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    const tones = current.map((cell) => getCellTone(cell));
+    const outlineSeedMask = buildOutlineSeedMask(
+      current,
+      tones,
+      gridWidth,
+      gridHeight,
+      strengthNorm,
+    );
+    const next = current.map((cell) => ({ ...cell }));
+    let changed = false;
+
+    if (normalizedOverrideCell) {
+      for (let index = 0; index < current.length; index += 1) {
+        if (!outlineSeedMask[index]) {
+          continue;
+        }
+        if (
+          next[index].label === normalizedOverrideCell.label &&
+          next[index].hex === normalizedOverrideCell.hex
+        ) {
+          continue;
+        }
+        next[index] = { ...normalizedOverrideCell, source: "detected" };
+        changed = true;
+      }
+    }
+
+    for (let index = 0; index < current.length; index += 1) {
+      if (outlineSeedMask[index]) {
+        continue;
+      }
+
+      const currentTone = tones[index];
+      if (!currentTone) {
+        continue;
+      }
+
+      const candidate = findOutlineBridgeCandidate(
+        current,
+        tones,
+        outlineSeedMask,
+        gridWidth,
+        gridHeight,
+        index,
+        strengthNorm,
+      );
+      if (!candidate) {
+        continue;
+      }
+
+      const candidateTone = tones[candidate.index];
+      if (!candidateTone) {
+        continue;
+      }
+
+      if (
+        wouldBridgeCreateWideOutline(
+          current,
+          gridWidth,
+          gridHeight,
+          index,
+          candidate.cell.label,
+          candidate.mode,
+        )
+      ) {
+        continue;
+      }
+
+      const minimumContrast = 12 + (1 - strengthNorm) * 8;
+      if (currentTone.luma <= candidateTone.luma + minimumContrast) {
+        continue;
+      }
+
+      const fillCell = normalizedOverrideCell ?? candidate.cell;
+      if (current[index].label === fillCell.label && current[index].hex === fillCell.hex) {
+        continue;
+      }
+
+      next[index] = { ...fillCell, source: "detected" };
+      changed = true;
+    }
+
+    current = next;
+    if (!changed) {
+      break;
+    }
+  }
+
+  return current;
+}
+
+function buildOutlineSeedMask(
+  cells: EditableCell[],
+  tones: Array<CellTone | null>,
+  gridWidth: number,
+  gridHeight: number,
+  strengthNorm: number,
+) {
+  const mask = new Uint8Array(cells.length);
+  const localContrastThreshold = 18 - strengthNorm * 4;
+  const absoluteDarkThreshold = 176 - strengthNorm * 24;
+
+  for (let index = 0; index < cells.length; index += 1) {
+    const tone = tones[index];
+    const cell = cells[index];
+    if (!tone || !cell.label) {
+      continue;
+    }
+
+    const x = index % gridWidth;
+    const y = Math.floor(index / gridWidth);
+    let brightNeighborCount = 0;
+    let sameLabelSupport = 0;
+
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) {
+          continue;
+        }
+
+        const neighborX = x + dx;
+        const neighborY = y + dy;
+        if (
+          neighborX < 0 ||
+          neighborY < 0 ||
+          neighborX >= gridWidth ||
+          neighborY >= gridHeight
+        ) {
+          continue;
+        }
+
+        const neighborIndex = neighborY * gridWidth + neighborX;
+        const neighborCell = cells[neighborIndex];
+        const neighborTone = tones[neighborIndex];
+        if (!neighborTone || !neighborCell.label) {
+          continue;
+        }
+
+        if (neighborCell.label === cell.label) {
+          sameLabelSupport += 1;
+          continue;
+        }
+
+        if (neighborTone.luma >= tone.luma + localContrastThreshold) {
+          brightNeighborCount += 1;
+        }
+      }
+    }
+
+    if (
+      sameLabelSupport >= 1 &&
+      (brightNeighborCount >= 2 ||
+        (brightNeighborCount >= 1 && tone.luma <= absoluteDarkThreshold))
+    ) {
+      mask[index] = 1;
+    }
+  }
+
+  return mask;
+}
+
+function findOutlineBridgeCandidate(
+  cells: EditableCell[],
+  tones: Array<CellTone | null>,
+  outlineSeedMask: Uint8Array,
+  gridWidth: number,
+  gridHeight: number,
+  index: number,
+  strengthNorm: number,
+): OutlineBridgeCandidate | null {
+  const x = index % gridWidth;
+  const y = Math.floor(index / gridWidth);
+  let best: OutlineBridgeCandidate | null = null;
+
+  function addCandidate(
+    leftIndex: number | null,
+    rightIndex: number | null,
+    support: number,
+    mode: "horizontal" | "vertical" | "diag-desc" | "diag-asc",
+  ) {
+    if (
+      leftIndex === null ||
+      rightIndex === null ||
+      !outlineSeedMask[leftIndex] ||
+      !outlineSeedMask[rightIndex]
+    ) {
+      return;
+    }
+
+    const leftCell = cells[leftIndex];
+    const rightCell = cells[rightIndex];
+    const leftTone = tones[leftIndex];
+    const rightTone = tones[rightIndex];
+    if (
+      !leftCell.label ||
+      !rightCell.label ||
+      leftCell.label !== rightCell.label ||
+      !leftTone ||
+      !rightTone
+    ) {
+      return;
+    }
+
+    const candidateIndex = leftTone.luma <= rightTone.luma ? leftIndex : rightIndex;
+    const candidateTone = tones[candidateIndex]!;
+    const candidateCell = cells[candidateIndex];
+    if (
+      !best ||
+      support > best.support ||
+      (support === best.support && candidateTone.luma < best.luma)
+    ) {
+      best = {
+        support,
+        index: candidateIndex,
+        luma: candidateTone.luma,
+        cell: candidateCell,
+        mode,
+      };
+    }
+  }
+
+  const straightPairs: Array<[
+    [number, number],
+    [number, number],
+    number,
+    "horizontal" | "vertical" | "diag-desc" | "diag-asc",
+  ]> = [
+    [[-1, 0], [1, 0], 4, "horizontal"],
+    [[0, -1], [0, 1], 4, "vertical"],
+  ];
+  if (strengthNorm >= 0.35) {
+    straightPairs.push(
+      [[-1, -1], [1, 1], 3, "diag-desc"],
+      [[1, -1], [-1, 1], 3, "diag-asc"],
+    );
+  }
+
+  for (const [leftOffset, rightOffset, support, mode] of straightPairs) {
+    addCandidate(
+      getGridNeighborIndex(x, y, leftOffset[0], leftOffset[1], gridWidth, gridHeight),
+      getGridNeighborIndex(x, y, rightOffset[0], rightOffset[1], gridWidth, gridHeight),
+      support,
+      mode,
+    );
+  }
+  return best;
+}
+
+function wouldBridgeCreateWideOutline(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+  index: number,
+  label: string | null,
+  mode: "horizontal" | "vertical" | "diag-desc" | "diag-asc",
+) {
+  if (!label) {
+    return true;
+  }
+
+  const x = index % gridWidth;
+  const y = Math.floor(index / gridWidth);
+
+  const hasSameLabelAt = (dx: number, dy: number) => {
+    const neighborIndex = getGridNeighborIndex(x, y, dx, dy, gridWidth, gridHeight);
+    return neighborIndex !== null && cells[neighborIndex]?.label === label;
+  };
+
+  if (mode === "horizontal") {
+    return hasSameLabelAt(0, -1) || hasSameLabelAt(0, 1);
+  }
+  if (mode === "vertical") {
+    return hasSameLabelAt(-1, 0) || hasSameLabelAt(1, 0);
+  }
+
+  return (
+    hasSameLabelAt(-1, 0) ||
+    hasSameLabelAt(1, 0) ||
+    hasSameLabelAt(0, -1) ||
+    hasSameLabelAt(0, 1)
+  );
+}
+
+function getGridNeighborIndex(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  gridWidth: number,
+  gridHeight: number,
+) {
+  const nextX = x + dx;
+  const nextY = y + dy;
+  if (nextX < 0 || nextY < 0 || nextX >= gridWidth || nextY >= gridHeight) {
+    return null;
+  }
+  return nextY * gridWidth + nextX;
+}
+
+function getCellTone(cell: EditableCell): CellTone | null {
+  if (!cell.hex) {
+    return null;
+  }
+
+  const rgb = hexToRgb(cell.hex);
+  return {
+    rgb,
+    luma: rgbToGray(rgb),
+  };
+}
+
+export function reduceColorsPhotoshopStyle(
+  image: RasterImage,
+  tolerance: number,
+  options: ReduceColorsOptions = {},
+) {
   const indexByColor = new Map<number, number>();
   const uniqueColors: Rgb[] = [];
   const counts: number[] = [];
   const pixelCount = image.width * image.height;
   const inverse = new Int32Array(pixelCount);
+  const preserveEdges = options.preserveEdges ?? false;
 
   for (let index = 0; index < pixelCount; index += 1) {
     const pixelIndex = index * 4;
@@ -1623,6 +2126,7 @@ function reduceColorsPhotoshopStyle(image: RasterImage, tolerance: number) {
   const rareColorLimit = getRareColorPixelLimit(pixelCount);
   const oklabByColor = uniqueColors.map((color) => rgbToOklab(color));
   const replacementByColor = new Int32Array(originalUniqueColors);
+  const similarNeighborThreshold = Math.max(4, tolerance * 0.65);
   for (let index = 0; index < originalUniqueColors; index += 1) {
     replacementByColor[index] = index;
   }
@@ -1668,7 +2172,23 @@ function reduceColorsPhotoshopStyle(image: RasterImage, tolerance: number) {
 
   const data = new Uint8ClampedArray(image.data.length);
   for (let index = 0; index < pixelCount; index += 1) {
-    const replacement = uniqueColors[replacementByColor[inverse[index]]];
+    const colorIndex = inverse[index];
+    const replacementIndex =
+      preserveEdges &&
+      replacementByColor[colorIndex] !== colorIndex &&
+      hasSupportingSimilarNeighbor(
+        inverse,
+        image.width,
+        image.height,
+        index,
+        oklabByColor[colorIndex],
+        (candidateIndex) => oklabByColor[candidateIndex]!,
+        similarNeighborThreshold,
+        (candidateIndex) => (counts[candidateIndex] ?? 0) <= rareColorLimit,
+      )
+        ? colorIndex
+        : replacementByColor[colorIndex];
+    const replacement = uniqueColors[replacementIndex];
     const pixelIndex = index * 4;
     data[pixelIndex] = replacement[0];
     data[pixelIndex + 1] = replacement[1];
@@ -1685,6 +2205,7 @@ function reduceColorsPhotoshopStyle(image: RasterImage, tolerance: number) {
     globallyReducedImage,
     tolerance,
     rareColorLimit,
+    options,
   );
 
   return {
@@ -1698,6 +2219,7 @@ function mergeRareNeighborhoodColors(
   image: RasterImage,
   tolerance: number,
   rareColorLimit = 2,
+  options: ReduceColorsOptions = {},
 ) {
   if (tolerance <= 0 || image.width <= 0 || image.height <= 0) {
     return image;
@@ -1730,11 +2252,30 @@ function mergeRareNeighborhoodColors(
 
   const nextData = new Uint8ClampedArray(image.data);
   let changed = false;
+  const preserveEdges = options.preserveEdges ?? false;
+  const similarNeighborThreshold = Math.max(4, tolerance * 0.65);
 
   for (let index = 0; index < pixelCount; index += 1) {
     const currentCode = codes[index];
     const currentCount = counts.get(currentCode) ?? 0;
     if (currentCount <= 0 || currentCount > rareColorLimit) {
+      continue;
+    }
+
+    const currentOklab = getCodeOklab(currentCode);
+    if (
+      preserveEdges &&
+      hasSupportingSimilarNeighbor(
+        codes,
+        image.width,
+        image.height,
+        index,
+        currentOklab,
+        getCodeOklab,
+        similarNeighborThreshold,
+        (neighborCode) => (counts.get(neighborCode) ?? 0) <= rareColorLimit,
+      )
+    ) {
       continue;
     }
 
@@ -1795,7 +2336,6 @@ function mergeRareNeighborhoodColors(
       continue;
     }
 
-    const currentOklab = getCodeOklab(currentCode);
     const candidateOklab = getCodeOklab(bestCode);
     const distance = Math.sqrt(oklabDistanceSquared(currentOklab, candidateOklab)) * 255;
     if (distance > tolerance) {
@@ -1818,6 +2358,46 @@ function mergeRareNeighborhoodColors(
         data: nextData,
       }
     : image;
+}
+
+function hasSupportingSimilarNeighbor(
+  codes: Int32Array,
+  width: number,
+  height: number,
+  index: number,
+  currentOklab: Oklab,
+  getCodeOklab: (code: number) => Oklab,
+  threshold: number,
+  isSupportingCode?: (code: number) => boolean,
+) {
+  const x = index % width;
+  const y = Math.floor(index / width);
+
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dy === 0) {
+        continue;
+      }
+
+      const neighborX = x + dx;
+      const neighborY = y + dy;
+      if (neighborX < 0 || neighborY < 0 || neighborX >= width || neighborY >= height) {
+        continue;
+      }
+
+      const neighborCode = codes[neighborY * width + neighborX];
+      if (isSupportingCode && !isSupportingCode(neighborCode)) {
+        continue;
+      }
+      const distance =
+        Math.sqrt(oklabDistanceSquared(currentOklab, getCodeOklab(neighborCode))) * 255;
+      if (distance <= threshold) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function getRareColorPixelLimit(pixelCount: number) {
@@ -1989,6 +2569,22 @@ function getExportBoardPatternColor(
   return shades[pattern[Math.floor(row / 5) % 4][Math.floor(column / 5) % 4]];
 }
 
+export function getChartCellGap(cellSize: number, gaplessCells = false) {
+  return gaplessCells ? 0 : Math.max(1, Math.floor(cellSize / 18));
+}
+
+export function getChartFrameWidth(cellSize: number, gaplessCells = false) {
+  return gaplessCells ? 0 : Math.max(4, Math.floor(cellSize / 7));
+}
+
+export function shouldShowChartColorLabels(showColorLabels?: boolean) {
+  return showColorLabels ?? true;
+}
+
+export function shouldShowChartHeaderDetails(gaplessCells = false) {
+  return !gaplessCells;
+}
+
 async function renderChart(
   cells: EditableCell[],
   colors: ColorCount[],
@@ -2005,10 +2601,13 @@ async function renderChart(
   const includeGuides = chartSettings?.includeGuides ?? true;
   const includeLegend = chartSettings?.includeLegend ?? true;
   const includeQrCode = chartSettings?.includeQrCode ?? false;
+  const showColorLabels = shouldShowChartColorLabels(chartSettings?.showColorLabels);
+  const gaplessCells = chartSettings?.gaplessCells ?? false;
+  const showHeaderDetails = shouldShowChartHeaderDetails(gaplessCells);
   const includeBoardPattern = chartSettings?.includeBoardPattern ?? false;
   const boardTheme = chartSettings?.boardTheme ?? "gray";
-  const cellGap = Math.max(1, Math.floor(cellSize / 18));
-  const frame = Math.max(4, Math.floor(cellSize / 7));
+  const cellGap = getChartCellGap(cellSize, gaplessCells);
+  const frame = getChartFrameWidth(cellSize, gaplessCells);
   const axisGutter = includeGuides ? Math.max(26, Math.floor(cellSize * 0.92)) : 0;
   const boardWidth = gridWidth * cellSize;
   const boardHeight = gridHeight * cellSize;
@@ -2026,7 +2625,13 @@ async function renderChart(
   const legendCountFontSize = Math.max(14, Math.floor(cellSize * 0.35));
   const logoSize = Math.max(42, Math.floor(cellSize * 1.34));
   const brandRowHeight = Math.max(logoSize, brandFontSize) + 16;
-  const metaRowHeight = metaLine ? metaFontSize + Math.max(12, Math.floor(cellSize * 0.24)) : 0;
+  const metaRowHeight =
+    showHeaderDetails && metaLine
+      ? metaFontSize + Math.max(12, Math.floor(cellSize * 0.24))
+      : 0;
+  const headerSectionHeight = showHeaderDetails
+    ? titleGap + titleFontSize + metaRowHeight + titleGap
+    : Math.max(16, Math.floor(cellSize * 0.5));
 
   const legendTileWidth = Math.max(88, Math.floor(cellSize * 2.08));
   const legendSwatchHeight = Math.max(46, Math.floor(cellSize * 1.08));
@@ -2083,10 +2688,7 @@ async function renderChart(
   const canvasHeight =
     canvasPadding +
     brandRowHeight +
-    titleGap +
-    titleFontSize +
-    metaRowHeight +
-    titleGap +
+    headerSectionHeight +
     boardBlockHeight +
     legendSectionGap +
     legendSectionHeight +
@@ -2114,30 +2716,39 @@ async function renderChart(
   drawBrandLogo(context, brandStartX, brandRowY - logoSize / 2, logoSize);
   await drawBrandWordmark(context, brandStartX + logoSize + 18, brandRowY, wordmarkHeight);
 
-  context.textAlign = "center";
-  context.font = buildFont(titleFontSize, true, true);
-  context.fillText(title, canvasWidth / 2, canvasPadding + brandRowHeight + titleGap + titleFontSize / 2);
-
-  if (metaLine) {
-    context.font = buildFont(metaFontSize, false, false);
-    context.fillStyle = "#5E5346";
+  if (showHeaderDetails) {
+    context.textAlign = "center";
+    context.fillStyle = "#2C2C2C";
+    context.font = buildFont(titleFontSize, true, true);
     context.fillText(
-      metaLine,
+      title,
       canvasWidth / 2,
-      canvasPadding + brandRowHeight + titleGap + titleFontSize + metaFontSize / 2 + 8,
+      canvasPadding + brandRowHeight + titleGap + titleFontSize / 2,
     );
+
+    if (metaLine) {
+      context.font = buildFont(metaFontSize, false, false);
+      context.fillStyle = "#5E5346";
+      context.fillText(
+        metaLine,
+        canvasWidth / 2,
+        canvasPadding + brandRowHeight + titleGap + titleFontSize + metaFontSize / 2 + 8,
+      );
+    }
   }
+  context.textAlign = "center";
 
   const boardBlockX = Math.floor((canvasWidth - boardBlockWidth) / 2);
-  const boardBlockY =
-    canvasPadding + brandRowHeight + titleGap + titleFontSize + metaRowHeight + titleGap;
+  const boardBlockY = canvasPadding + brandRowHeight + headerSectionHeight;
   const boardOuterX = boardBlockX + axisGutter;
   const boardOuterY = boardBlockY + axisGutter;
   const boardInnerX = boardOuterX + frame;
   const boardInnerY = boardOuterY + frame;
 
-  context.fillStyle = BOARD_FRAME_COLOR;
-  context.fillRect(boardOuterX, boardOuterY, boardWidth + frame * 2, boardHeight + frame * 2);
+  if (frame > 0) {
+    context.fillStyle = BOARD_FRAME_COLOR;
+    context.fillRect(boardOuterX, boardOuterY, boardWidth + frame * 2, boardHeight + frame * 2);
+  }
 
   if (includeBoardPattern) {
     drawExportBoardPattern(
@@ -2166,9 +2777,11 @@ async function renderChart(
             : [243, 238, 229];
       context.fillStyle = rgbToCss(fillRgb);
       context.fillRect(x, y, cellSize, cellSize);
-      context.strokeStyle = GRID_SEPARATOR_COLOR;
-      context.lineWidth = cellGap;
-      context.strokeRect(x, y, cellSize, cellSize);
+      if (cellGap > 0) {
+        context.strokeStyle = GRID_SEPARATOR_COLOR;
+        context.lineWidth = cellGap;
+        context.strokeRect(x, y, cellSize, cellSize);
+      }
     }
   }
 
@@ -2195,23 +2808,25 @@ async function renderChart(
     );
   }
 
-  context.font = buildFont(labelFontSize, true, false);
-  for (let row = 0; row < gridHeight; row += 1) {
-    for (let column = 0; column < gridWidth; column += 1) {
-      const index = row * gridWidth + column;
-      const x = boardInnerX + column * cellSize;
-      const y = boardInnerY + row * cellSize;
-      const cell = normalizeEditableCell(cells[index] ?? { label: null, hex: null });
-      const label = cell.label;
-      if (!label || !cell.hex) {
-        continue;
+  if (showColorLabels) {
+    context.font = buildFont(labelFontSize, true, false);
+    for (let row = 0; row < gridHeight; row += 1) {
+      for (let column = 0; column < gridWidth; column += 1) {
+        const index = row * gridWidth + column;
+        const x = boardInnerX + column * cellSize;
+        const y = boardInnerY + row * cellSize;
+        const cell = normalizeEditableCell(cells[index] ?? { label: null, hex: null });
+        const label = cell.label;
+        if (!label || !cell.hex) {
+          continue;
+        }
+        const textFill = chooseTextColor(hexToRgb(cell.hex));
+        context.lineWidth = 2;
+        context.strokeStyle = textFill === "#FFFFFF" ? "#111111" : "#FFFFFF";
+        context.fillStyle = textFill;
+        context.strokeText(label, x + cellSize / 2, y + cellSize / 2);
+        context.fillText(label, x + cellSize / 2, y + cellSize / 2);
       }
-      const textFill = chooseTextColor(hexToRgb(cell.hex));
-      context.lineWidth = 2;
-      context.strokeStyle = textFill === "#FFFFFF" ? "#111111" : "#FFFFFF";
-      context.fillStyle = textFill;
-      context.strokeText(label, x + cellSize / 2, y + cellSize / 2);
-      context.fillText(label, x + cellSize / 2, y + cellSize / 2);
     }
   }
 
@@ -2784,7 +3399,7 @@ function summarizeCells(cells: EditableCell[], paletteDefinition: PaletteDefinit
     });
 }
 
-function collapseOpenBackgroundAreas(
+export function collapseOpenBackgroundAreas(
   cells: EditableCell[],
   gridWidth: number,
   gridHeight: number,
@@ -2797,9 +3412,14 @@ function collapseOpenBackgroundAreas(
   const visited = new Uint8Array(normalizedCells.length);
   const nextCells = normalizedCells.map((cell) => ({ ...cell }));
   const minimumOpenArea = Math.max(6, Math.round(normalizedCells.length * 0.015));
+  const protectedGapMask = buildProtectedBackgroundGapMask(
+    normalizedCells,
+    gridWidth,
+    gridHeight,
+  );
 
   for (let index = 0; index < normalizedCells.length; index += 1) {
-    if (visited[index]) {
+    if (visited[index] || protectedGapMask[index]) {
       continue;
     }
 
@@ -2843,7 +3463,8 @@ function collapseOpenBackgroundAreas(
         if (
           neighborIndex < 0 ||
           neighborIndex >= normalizedCells.length ||
-          visited[neighborIndex]
+          visited[neighborIndex] ||
+          protectedGapMask[neighborIndex]
         ) {
           continue;
         }
@@ -2907,6 +3528,169 @@ function belongsToSameBackgroundComponent(
   }
 
   return false;
+}
+
+function buildProtectedBackgroundGapMask(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+) {
+  const mask = new Uint8Array(cells.length);
+
+  for (let index = 0; index < cells.length; index += 1) {
+    const mouth = getProtectedBackgroundMouth(cells, gridWidth, gridHeight, index);
+    if (!mouth) {
+      continue;
+    }
+
+    const firstRegion = collectBackgroundSubregion(
+      cells,
+      gridWidth,
+      gridHeight,
+      mouth.firstNeighborIndex,
+      index,
+      cells[index],
+    );
+    const secondRegion = collectBackgroundSubregion(
+      cells,
+      gridWidth,
+      gridHeight,
+      mouth.secondNeighborIndex,
+      index,
+      cells[index],
+    );
+    if (firstRegion.touchesEdge === secondRegion.touchesEdge) {
+      continue;
+    }
+
+    const protectedRegion = firstRegion.touchesEdge ? secondRegion : firstRegion;
+    mask[index] = 1;
+    for (const protectedIndex of protectedRegion.indices) {
+      mask[protectedIndex] = 1;
+    }
+  }
+
+  return mask;
+}
+
+function getProtectedBackgroundMouth(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+  index: number,
+) {
+  const cell = cells[index];
+  if (!isBackgroundCandidateCell(cell)) {
+    return false;
+  }
+
+  const x = index % gridWidth;
+  const y = Math.floor(index / gridWidth);
+  if (x <= 0 || y <= 0 || x >= gridWidth - 1 || y >= gridHeight - 1) {
+    return null;
+  }
+
+  const leftIndex = index - 1;
+  const rightIndex = index + 1;
+  const upIndex = index - gridWidth;
+  const downIndex = index + gridWidth;
+
+  const leftWall = isForegroundBarrierCell(cells, gridWidth, gridHeight, x - 1, y);
+  const rightWall = isForegroundBarrierCell(cells, gridWidth, gridHeight, x + 1, y);
+  const upWall = isForegroundBarrierCell(cells, gridWidth, gridHeight, x, y - 1);
+  const downWall = isForegroundBarrierCell(cells, gridWidth, gridHeight, x, y + 1);
+  const upBackground = belongsToSameBackgroundComponent(cell, cells[upIndex]);
+  const downBackground = belongsToSameBackgroundComponent(cell, cells[downIndex]);
+  const leftBackground = belongsToSameBackgroundComponent(cell, cells[leftIndex]);
+  const rightBackground = belongsToSameBackgroundComponent(cell, cells[rightIndex]);
+
+  if (leftWall && rightWall && upBackground && downBackground) {
+    return {
+      firstNeighborIndex: upIndex,
+      secondNeighborIndex: downIndex,
+    };
+  }
+
+  if (upWall && downWall && leftBackground && rightBackground) {
+    return {
+      firstNeighborIndex: leftIndex,
+      secondNeighborIndex: rightIndex,
+    };
+  }
+
+  return null;
+}
+
+function isForegroundBarrierCell(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+  x: number,
+  y: number,
+) {
+  if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) {
+    return false;
+  }
+
+  return !isBackgroundCandidateCell(cells[y * gridWidth + x]);
+}
+
+function collectBackgroundSubregion(
+  cells: EditableCell[],
+  gridWidth: number,
+  gridHeight: number,
+  startIndex: number,
+  blockedIndex: number,
+  baseCell: EditableCell,
+) {
+  const indices: number[] = [];
+  const queue = [startIndex];
+  const visited = new Set<number>([blockedIndex, startIndex]);
+  let touchesEdge = false;
+
+  while (queue.length > 0) {
+    const currentIndex = queue.pop()!;
+    indices.push(currentIndex);
+    const x = currentIndex % gridWidth;
+    const y = Math.floor(currentIndex / gridWidth);
+    if (x === 0 || y === 0 || x === gridWidth - 1 || y === gridHeight - 1) {
+      touchesEdge = true;
+    }
+
+    const neighbors = [
+      currentIndex - 1,
+      currentIndex + 1,
+      currentIndex - gridWidth,
+      currentIndex + gridWidth,
+    ];
+    for (const neighborIndex of neighbors) {
+      if (
+        neighborIndex < 0 ||
+        neighborIndex >= cells.length ||
+        visited.has(neighborIndex)
+      ) {
+        continue;
+      }
+
+      const neighborX = neighborIndex % gridWidth;
+      const neighborY = Math.floor(neighborIndex / gridWidth);
+      if (Math.abs(neighborX - x) + Math.abs(neighborY - y) !== 1) {
+        continue;
+      }
+
+      if (!belongsToSameBackgroundComponent(baseCell, cells[neighborIndex])) {
+        continue;
+      }
+
+      visited.add(neighborIndex);
+      queue.push(neighborIndex);
+    }
+  }
+
+  return {
+    indices,
+    touchesEdge,
+  };
 }
 
 function normalizeEditableCell(cell: EditableCell): EditableCell {

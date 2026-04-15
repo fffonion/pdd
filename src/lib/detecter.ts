@@ -5,6 +5,7 @@ interface WasmDetectorExports {
   detect_auto(ptr: number, len: number, width: number, height: number): number;
   detect_chart(ptr: number, len: number, width: number, height: number): number;
   detect_pixel_art(ptr: number, len: number, width: number, height: number): number;
+  enhance_edges(ptr: number, len: number, width: number, height: number, strength: number): number;
   result_ptr(): number;
 }
 
@@ -131,6 +132,55 @@ export async function detectAutoRasterWithWasm(
     gridHeight: pixel.gridHeight,
     confidence: pixel.confidence,
   };
+}
+
+export async function enhanceEdgesWithFftWasm(
+  raster: RasterImageLike,
+  strength: number,
+): Promise<RasterImageLike> {
+  const normalizedStrength = Math.max(0, Math.min(100, Math.round(strength)));
+  if (normalizedStrength <= 0 || raster.width < 3 || raster.height < 3) {
+    return {
+      width: raster.width,
+      height: raster.height,
+      data: new Uint8ClampedArray(raster.data),
+    };
+  }
+
+  return await runInDetectorQueue(async () => {
+    const exports = await loadWasmDetector();
+    if (!exports) {
+      return {
+        width: raster.width,
+        height: raster.height,
+        data: new Uint8ClampedArray(raster.data),
+      };
+    }
+
+    const length = raster.data.length;
+    const pointer = exports.alloc(length);
+    try {
+      const inputBuffer = new Uint8Array(exports.memory.buffer, pointer, length);
+      inputBuffer.set(raster.data);
+      const changed = exports.enhance_edges(
+        pointer,
+        length,
+        raster.width,
+        raster.height,
+        normalizedStrength,
+      );
+      const outputBuffer = new Uint8Array(exports.memory.buffer, pointer, length);
+      return {
+        width: raster.width,
+        height: raster.height,
+        data: changed
+          ? new Uint8ClampedArray(outputBuffer)
+          : new Uint8ClampedArray(raster.data),
+      };
+    } finally {
+      exports.dealloc(pointer, length);
+    }
+  });
 }
 
 async function detectAutoCandidatesWithWasm(

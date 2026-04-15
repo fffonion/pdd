@@ -167,13 +167,13 @@ export function serializeChartPayload(
 
   if (titleBytes.length > 0) {
     pushVarUint(bytes, titleBytes.length);
-    bytes.push(...titleBytes);
+    appendByteValues(bytes, titleBytes);
   }
 
   for (const run of chartRuns) {
     pushVarUint(bytes, run.length * 2 + (run.isFilled ? 1 : 0));
     if (run.isFilled) {
-      bytes.push(...run.encodedValues);
+      appendByteValues(bytes, run.encodedValues);
     }
   }
 
@@ -448,6 +448,12 @@ function pushVarUint(output: number[], value: number) {
     }
     output.push(byte);
   } while (remaining > 0);
+}
+
+function appendByteValues(output: number[], values: ArrayLike<number>) {
+  for (let index = 0; index < values.length; index += 1) {
+    output.push(values[index]!);
+  }
 }
 
 function readVarUint(reader: { bytes: Uint8Array; offset: number }) {

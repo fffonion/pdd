@@ -5,12 +5,20 @@ import {
   serializeChartPayload,
 } from "../src/lib/chart-serialization";
 import {
+  collapseOpenBackgroundAreas,
   debugAutoDetectRaster,
   debugDetectChartBoardWithWasmPrepared,
+  enhancePixelOutlineContinuity,
   findChartQrBoardPlacement,
+  getChartCellGap,
+  getChartFrameWidth,
+  representativeColorFromPatch,
+  reduceColorsPhotoshopStyle,
+  shouldShowChartColorLabels,
+  shouldShowChartHeaderDetails,
   processImageFile,
 } from "../src/lib/chart-processor";
-import { detectChartBoardWithWasm } from "../src/lib/detecter";
+import { detectChartBoardWithWasm, enhanceEdgesWithFftWasm } from "../src/lib/detecter";
 
 const fixtureDir = join(import.meta.dir, "fixtures");
 const sampleImagePath = join(fixtureDir, "bangboo_4.jpeg");
@@ -107,6 +115,45 @@ try {
     height: decoded.height,
     data: rgba,
   };
+}
+
+function buildSolidRaster(width: number, height: number, color: [number, number, number]) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    const pixelIndex = index * 4;
+    data[pixelIndex] = color[0];
+    data[pixelIndex + 1] = color[1];
+    data[pixelIndex + 2] = color[2];
+    data[pixelIndex + 3] = 255;
+  }
+
+  return { width, height, data };
+}
+
+function setRasterPixel(
+  raster: { width: number; height: number; data: Uint8ClampedArray },
+  x: number,
+  y: number,
+  color: [number, number, number],
+) {
+  const pixelIndex = (y * raster.width + x) * 4;
+  raster.data[pixelIndex] = color[0];
+  raster.data[pixelIndex + 1] = color[1];
+  raster.data[pixelIndex + 2] = color[2];
+  raster.data[pixelIndex + 3] = 255;
+}
+
+function getRasterPixel(
+  raster: { width: number; height: number; data: Uint8ClampedArray },
+  x: number,
+  y: number,
+) {
+  const pixelIndex = (y * raster.width + x) * 4;
+  return [
+    raster.data[pixelIndex]!,
+    raster.data[pixelIndex + 1]!,
+    raster.data[pixelIndex + 2]!,
+  ] as [number, number, number];
 }
 
 function readUint32(bytes: Uint8Array, offset: number) {
@@ -371,6 +418,263 @@ test("compact chart serialization should deflate dense charts before base83 enco
   expect(serialized.length).toBeLessThan(800);
 });
 
+test("compact chart serialization should avoid oversized push calls for very large dense charts", () => {
+  const width = 360;
+  const height = 360;
+  const palette = ["A1", "B21", "H7", "H19", "M2", "F9"] as const;
+  const cells = Array.from({ length: width * height }, (_, index) => {
+    return [palette[index % palette.length]!, 0] as [string, 0];
+  });
+
+  const originalPush = Array.prototype.push;
+  Array.prototype.push = function patchedPush(...items: unknown[]) {
+    if (items.length > 10_000) {
+      throw new Error(`push received too many arguments: ${items.length}`);
+    }
+    return Reflect.apply(originalPush, this, items);
+  };
+
+  try {
+    const serialized = serializeChartPayload({
+      colorSystemId: "mard_221",
+      gridWidth: width,
+      gridHeight: height,
+      preferredEditorMode: "pindou",
+      cells,
+    });
+    const parsed = deserializeChartPayload(serialized);
+
+    expect(parsed.gridWidth).toBe(width);
+    expect(parsed.gridHeight).toBe(height);
+    expect(parsed.cells.length).toBe(width * height);
+    expect(parsed.cells[0]).toEqual(["A1", 0]);
+    expect(parsed.cells.at(-1)).toEqual(["F9", 0]);
+  } finally {
+    Array.prototype.push = originalPush;
+  }
+});
+
+test("chart export pixel-art mode should remove cell gaps", () => {
+  expect(getChartCellGap(36, false)).toBe(2);
+  expect(getChartCellGap(36, true)).toBe(0);
+  expect(getChartCellGap(8, false)).toBe(1);
+  expect(getChartFrameWidth(36, false)).toBe(5);
+  expect(getChartFrameWidth(36, true)).toBe(0);
+  expect(shouldShowChartHeaderDetails()).toBe(true);
+  expect(shouldShowChartHeaderDetails(true)).toBe(false);
+});
+
+test("chart export should show color labels by default and allow hiding them", () => {
+  expect(shouldShowChartColorLabels()).toBe(true);
+  expect(shouldShowChartColorLabels(true)).toBe(true);
+  expect(shouldShowChartColorLabels(false)).toBe(false);
+});
+
+test("photo color reduction should preserve thin similar-color edges", () => {
+  const raster = buildSolidRaster(5, 5, [200, 200, 200]);
+  setRasterPixel(raster, 1, 2, [186, 186, 186]);
+  setRasterPixel(raster, 2, 2, [182, 182, 182]);
+  setRasterPixel(raster, 3, 2, [188, 188, 188]);
+
+  const legacy = reduceColorsPhotoshopStyle(raster, 20);
+  const preserved = reduceColorsPhotoshopStyle(raster, 20, { preserveEdges: true });
+
+  expect(getRasterPixel(legacy.image, 1, 2)).toEqual([200, 200, 200]);
+  expect(getRasterPixel(legacy.image, 2, 2)).toEqual([200, 200, 200]);
+  expect(getRasterPixel(legacy.image, 3, 2)).toEqual([200, 200, 200]);
+  expect(getRasterPixel(preserved.image, 1, 2)).toEqual([186, 186, 186]);
+  expect(getRasterPixel(preserved.image, 2, 2)).toEqual([182, 182, 182]);
+  expect(getRasterPixel(preserved.image, 3, 2)).toEqual([188, 188, 188]);
+});
+
+test("patch sampling should prefer cohesive actual pixels over averaged halo tones", () => {
+  const raster = buildSolidRaster(3, 3, [207, 207, 207]);
+  setRasterPixel(raster, 1, 0, [200, 200, 200]);
+  setRasterPixel(raster, 0, 1, [200, 200, 200]);
+  setRasterPixel(raster, 1, 1, [200, 200, 200]);
+  setRasterPixel(raster, 2, 1, [200, 200, 200]);
+  setRasterPixel(raster, 1, 2, [200, 200, 200]);
+
+  expect(representativeColorFromPatch(raster, 0, 0, 3, 3)).toEqual([200, 200, 200]);
+});
+
+test("photo color reduction should still merge isolated near-color noise when preserving edges", () => {
+  const raster = buildSolidRaster(5, 5, [200, 200, 200]);
+  setRasterPixel(raster, 2, 2, [188, 188, 188]);
+
+  const preserved = reduceColorsPhotoshopStyle(raster, 20, { preserveEdges: true });
+
+  expect(getRasterPixel(preserved.image, 2, 2)).toEqual([200, 200, 200]);
+  expect(preserved.reducedUniqueColors).toBe(1);
+});
+
+test("fft edge enhancement should strengthen a broken thin outline neighborhood", async () => {
+  const raster = buildSolidRaster(21, 21, [220, 220, 220]);
+  for (let y = 3; y <= 17; y += 1) {
+    if (y === 10) {
+      continue;
+    }
+    setRasterPixel(raster, 10, y, [28, 28, 28]);
+  }
+
+  const enhanced = await enhanceEdgesWithFftWasm(raster, 80);
+
+  expect(getRasterPixel(enhanced, 10, 10)[0]).toBeLessThan(200);
+  expect(getRasterPixel(enhanced, 9, 10)[0]).toBeLessThan(200);
+  expect(getRasterPixel(enhanced, 11, 10)[0]).toBeLessThan(200);
+});
+
+test("pixel outline continuity should bridge a one-cell horizontal gap after palette matching", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[2 * 5 + 0] = { ...outline };
+  cells[2 * 5 + 1] = { ...outline };
+  cells[2 * 5 + 3] = { ...outline };
+  cells[2 * 5 + 4] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 80);
+
+  expect(enhanced[2 * 5 + 2]).toMatchObject(outline);
+});
+
+test("pixel outline continuity should bridge a one-cell diagonal gap after palette matching", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[0 * 5 + 0] = { ...outline };
+  cells[1 * 5 + 1] = { ...outline };
+  cells[3 * 5 + 3] = { ...outline };
+  cells[4 * 5 + 4] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 80);
+
+  expect(enhanced[2 * 5 + 2]).toMatchObject(outline);
+});
+
+test("pixel outline continuity should honor the override edge color", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const override = { label: "OVERRIDE", hex: "#111111", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[2 * 5 + 0] = { ...outline };
+  cells[2 * 5 + 1] = { ...outline };
+  cells[2 * 5 + 3] = { ...outline };
+  cells[2 * 5 + 4] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 80, override);
+
+  expect(enhanced[2 * 5 + 2]).toMatchObject(override);
+});
+
+test("pixel outline continuity should recolor detected edge seeds with the override color", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const override = { label: "OVERRIDE", hex: "#111111", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[2 * 5 + 1] = { ...outline };
+  cells[2 * 5 + 2] = { ...outline };
+  cells[2 * 5 + 3] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 80, override);
+
+  expect(enhanced[2 * 5 + 1]).toMatchObject(override);
+  expect(enhanced[2 * 5 + 2]).toMatchObject(override);
+  expect(enhanced[2 * 5 + 3]).toMatchObject(override);
+});
+
+test("pixel outline continuity should not thicken a clean one-pixel outline", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[2 * 5 + 1] = { ...outline };
+  cells[2 * 5 + 2] = { ...outline };
+  cells[2 * 5 + 3] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 1);
+
+  expect(enhanced[1 * 5 + 2]).toMatchObject(fill);
+  expect(enhanced[3 * 5 + 2]).toMatchObject(fill);
+  expect(enhanced[2 * 5 + 0]).toMatchObject(fill);
+  expect(enhanced[2 * 5 + 4]).toMatchObject(fill);
+});
+
+test("pixel outline continuity should not thicken a clean one-pixel outline at high strength", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[2 * 5 + 1] = { ...outline };
+  cells[2 * 5 + 2] = { ...outline };
+  cells[2 * 5 + 3] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 80);
+
+  expect(enhanced[1 * 5 + 2]).toMatchObject(fill);
+  expect(enhanced[3 * 5 + 2]).toMatchObject(fill);
+  expect(enhanced[2 * 5 + 0]).toMatchObject(fill);
+  expect(enhanced[2 * 5 + 4]).toMatchObject(fill);
+});
+
+test("pixel outline continuity should preserve short whisker-like details without turning them into blocks", () => {
+  const fill = { label: "FILL", hex: "#F7DDE4", source: "detected" as const };
+  const outline = { label: "LINE", hex: "#5A525B", source: "detected" as const };
+  const cells = Array.from({ length: 5 * 5 }, () => ({ ...fill }));
+  cells[1 * 5 + 1] = { ...outline };
+  cells[2 * 5 + 2] = { ...outline };
+  cells[3 * 5 + 3] = { ...outline };
+
+  const enhanced = enhancePixelOutlineContinuity(cells, 5, 5, 80);
+
+  expect(enhanced[1 * 5 + 2]).toMatchObject(fill);
+  expect(enhanced[2 * 5 + 1]).toMatchObject(fill);
+  expect(enhanced[2 * 5 + 3]).toMatchObject(fill);
+  expect(enhanced[3 * 5 + 2]).toMatchObject(fill);
+});
+
+test("background collapse should preserve a quasi-enclosed interior behind a one-cell mouth", () => {
+  const background = { label: "H2", hex: "#FFFFFF", source: "detected" as const };
+  const wall = { label: "H6", hex: "#222222", source: "detected" as const };
+  const cells = Array.from({ length: 7 * 7 }, () => ({ ...background }));
+
+  for (let x = 1; x <= 5; x += 1) {
+    if (x !== 3) {
+      cells[1 * 7 + x] = { ...wall };
+    }
+    cells[5 * 7 + x] = { ...wall };
+  }
+  for (let y = 1; y <= 5; y += 1) {
+    cells[y * 7 + 1] = { ...wall };
+    cells[y * 7 + 5] = { ...wall };
+  }
+
+  const collapsed = collapseOpenBackgroundAreas(cells, 7, 7);
+
+  expect(collapsed[0]).toMatchObject({ label: null, hex: null });
+  expect(collapsed[3 * 7 + 3]).toMatchObject(background);
+  expect(collapsed[1 * 7 + 3]).toMatchObject(background);
+});
+
+test("background collapse should still remove interiors with a wide opening", () => {
+  const background = { label: "H2", hex: "#FFFFFF", source: "detected" as const };
+  const wall = { label: "H6", hex: "#222222", source: "detected" as const };
+  const cells = Array.from({ length: 7 * 7 }, () => ({ ...background }));
+
+  for (let x = 1; x <= 5; x += 1) {
+    if (x < 2 || x > 4) {
+      cells[1 * 7 + x] = { ...wall };
+    }
+    cells[5 * 7 + x] = { ...wall };
+  }
+  for (let y = 1; y <= 5; y += 1) {
+    cells[y * 7 + 1] = { ...wall };
+    cells[y * 7 + 5] = { ...wall };
+  }
+
+  const collapsed = collapseOpenBackgroundAreas(cells, 7, 7);
+
+  expect(collapsed[3 * 7 + 3]).toMatchObject({ label: null, hex: null });
+});
+
 test("chart QR placement should use a large empty board region when available", () => {
   const cells = Array.from({ length: 16 * 16 }, () => ({
     label: "A1",
@@ -599,11 +903,15 @@ test("embedded chart metadata should import directly without raster parsing", as
       reduceTolerance: 16,
       preSharpen: true,
       preSharpenStrength: 20,
+      applyAutoFftEdgeEnhanceDefault: true,
+      fftEdgeEnhance: true,
+      fftEdgeEnhanceStrength: 30,
     });
 
     expect(result.detectionMode).toBe("embedded-chart-metadata");
     expect(result.preferredEditorMode).toBe("pindou");
     expect(result.editingLocked).toBe(true);
+    expect(result.effectiveFftEdgeEnhance).toBe(false);
     expect(result.colorSystemId).toBe("mard_221");
     expect(result.chartTitle).toBe("Embedded Title");
     expect(result.fileName).toBe("【拼豆豆】embedded-test.png");
