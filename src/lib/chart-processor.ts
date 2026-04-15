@@ -1,9 +1,9 @@
-﻿import QRCode from "qrcode";
-import {
+﻿import {
   detectAutoRasterWithWasm,
   detectChartBoardWithWasm,
   type WasmAutoDetection,
 } from "./detecter";
+import { createEmbeddedChartQrDataUrl } from "./chart-qr";
 import {
   CHART_METADATA_APP,
   CHART_METADATA_VERSION,
@@ -2639,15 +2639,7 @@ async function loadChartQrCodeImage(
   chartQrTooLargeMessage: string,
 ) {
   try {
-    const src = await QRCode.toDataURL(shareUrl, {
-      errorCorrectionLevel: "L",
-      margin: 3,
-      width: size,
-      color: {
-        dark: "#111111",
-        light: "#FFFFFF",
-      },
-    });
+    const src = await createEmbeddedChartQrDataUrl(shareUrl, size);
     return loadChartDecorationImage(src);
   } catch {
     throw new Error(chartQrTooLargeMessage);

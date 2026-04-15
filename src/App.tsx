@@ -1,6 +1,5 @@
 ﻿import clsx from "clsx";
 import { ImageUp, LaptopMinimal, Moon, Sun, X } from "lucide-react";
-import QRCode from "qrcode";
 import { startTransition, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { BrandLogo } from "./components/brand-logo";
 import { BrandWordmark } from "./components/brand-wordmark";
@@ -33,6 +32,7 @@ import {
   type EditTool,
   type GridAxis,
 } from "./lib/editor-utils";
+import { createChartShareQrDataUrl } from "./lib/chart-qr";
 import { drawBrandWordmark, measureBrandWordmarkWidth } from "./lib/brand-wordmark";
 import { defaultLocale, getMessages, type Locale } from "./lib/i18n";
 import {
@@ -74,6 +74,9 @@ const EMPTY_SELECTION_LABEL = "__EMPTY__";
 const APP_BRAND_TITLE = "拼豆豆";
 const APP_BRAND_TITLE_MOBILE = "拼豆豆";
 const CHART_SHARE_QR_SIZE = 1200;
+const CHART_SHARE_QR_FALLBACK_URL = "yooooo.us/pdd/";
+const CHART_SHARE_QR_CANVAS_FILL = "#FFF8ED";
+const CHART_SHARE_QR_CARD_FILL = "#FFFFFF";
 
 function readInitialLocale(): Locale {
   if (typeof window === "undefined") {
@@ -338,7 +341,79 @@ function drawBrandLogoOnCanvas(
   }
 }
 
-async function buildChartShareQrBlob(shareUrl: string) {
+function resolveChartShareHeaderUrlFontSize(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+) {
+  let fontSize = 18;
+  while (fontSize > 11) {
+    context.font = `600 ${fontSize}px "Aptos", "Segoe UI", sans-serif`;
+    if (context.measureText(text).width <= maxWidth) {
+      return fontSize;
+    }
+    fontSize -= 1;
+  }
+  return 11;
+}
+
+async function drawChartShareQrFallbackHeader(
+  context: CanvasRenderingContext2D,
+  canvasSize: number,
+) {
+  const headerInset = Math.round(canvasSize * 0.08);
+  const headerX = headerInset;
+  const headerY = Math.round(canvasSize * 0.06);
+  const headerWidth = canvasSize - headerInset * 2;
+  const headerHeight = Math.round(canvasSize * 0.125);
+
+  const logoSize = Math.round(headerHeight * 0.38);
+  const brandGap = Math.round(headerHeight * 0.12);
+  const wordmarkHeight = Math.round(headerHeight * 0.42);
+  const wordmarkWidth = measureBrandWordmarkWidth(wordmarkHeight);
+  const brandWidth = logoSize + brandGap + wordmarkWidth;
+  const brandCenterY = headerY + Math.round(headerHeight * 0.32);
+  const brandGroupX = headerX + (headerWidth - brandWidth) / 2;
+  const logoY = brandCenterY - logoSize / 2;
+  const urlMaxWidth = headerWidth - Math.round(headerHeight * 0.8);
+  const urlFontSize = resolveChartShareHeaderUrlFontSize(
+    context,
+    CHART_SHARE_QR_FALLBACK_URL,
+    urlMaxWidth,
+  );
+  context.font = `600 ${urlFontSize}px "Aptos", "Segoe UI", sans-serif`;
+  const urlWidth = context.measureText(CHART_SHARE_QR_FALLBACK_URL).width;
+
+  drawBrandLogoOnCanvas(context, brandGroupX, logoY, logoSize);
+  await drawBrandWordmark(
+    context,
+    brandGroupX + logoSize + brandGap,
+    brandCenterY,
+    wordmarkHeight,
+  );
+
+  context.save();
+  context.fillStyle = "rgba(61, 43, 27, 0.78)";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.font = `600 ${urlFontSize}px "Aptos", "Segoe UI", sans-serif`;
+  context.fillText(
+    CHART_SHARE_QR_FALLBACK_URL,
+    headerX + headerWidth / 2,
+    headerY + Math.round(headerHeight * 0.82),
+    urlWidth,
+  );
+  context.restore();
+
+  return {
+    bottom: headerY + headerHeight,
+  };
+}
+
+async function buildChartShareQrBlob(
+  shareUrl: string,
+  chartQrTooLargeMessage: string,
+) {
   const canvas = document.createElement("canvas");
   canvas.width = CHART_SHARE_QR_SIZE;
   canvas.height = CHART_SHARE_QR_SIZE;
@@ -349,57 +424,94 @@ async function buildChartShareQrBlob(shareUrl: string) {
 
   const qrPadding = 84;
   const renderedQrSize = CHART_SHARE_QR_SIZE - qrPadding * 2;
-  const qrDataUrl = await QRCode.toDataURL(shareUrl, {
-    errorCorrectionLevel: "H",
-    margin: 0,
-    width: renderedQrSize,
-    color: {
-      dark: "#111111",
-      light: "#FFFFFF",
-    },
-  });
+  let qrDataUrl: string;
+  let renderStyle: "badge-overlay" | "plain";
+  try {
+    const generated = await createChartShareQrDataUrl(shareUrl, renderedQrSize);
+    qrDataUrl = generated.src;
+    renderStyle = generated.renderStyle;
+  } catch {
+    throw new Error(chartQrTooLargeMessage);
+  }
   const qrImage = await loadCanvasImage(qrDataUrl);
 
-  context.fillStyle = "#FFFFFF";
+  context.fillStyle = CHART_SHARE_QR_CANVAS_FILL;
   context.fillRect(0, 0, CHART_SHARE_QR_SIZE, CHART_SHARE_QR_SIZE);
-  context.imageSmoothingEnabled = false;
-  context.drawImage(qrImage, qrPadding, qrPadding, renderedQrSize, renderedQrSize);
-  context.imageSmoothingEnabled = true;
+  let qrDrawX = qrPadding;
+  let qrDrawY = qrPadding;
+  let qrDrawSize = renderedQrSize;
+  if (renderStyle === "plain") {
+    const fallbackHeader = await drawChartShareQrFallbackHeader(context, CHART_SHARE_QR_SIZE);
+    const headerGap = Math.round(CHART_SHARE_QR_SIZE * 0.03);
+    qrDrawSize = Math.min(
+      renderedQrSize,
+      CHART_SHARE_QR_SIZE - qrPadding * 2,
+      CHART_SHARE_QR_SIZE - fallbackHeader.bottom - headerGap - qrPadding,
+    );
+    qrDrawX = Math.round((CHART_SHARE_QR_SIZE - qrDrawSize) / 2);
+    qrDrawY = Math.round(fallbackHeader.bottom + headerGap);
+  }
 
-  const badgeWidth = Math.round(CHART_SHARE_QR_SIZE * 0.34);
-  const badgeHeight = Math.round(CHART_SHARE_QR_SIZE * 0.135);
-  const badgeX = Math.round((CHART_SHARE_QR_SIZE - badgeWidth) / 2);
-  const badgeY = Math.round((CHART_SHARE_QR_SIZE - badgeHeight) / 2);
-  const badgeRadius = 30;
+  const qrCardPadding = Math.round(CHART_SHARE_QR_SIZE * 0.028);
+  const qrCardX = qrDrawX - qrCardPadding;
+  const qrCardY = qrDrawY - qrCardPadding;
+  const qrCardSize = qrDrawSize + qrCardPadding * 2;
+  const qrCardRadius = Math.round(qrCardPadding * 1.3);
 
   context.save();
-  context.shadowColor = "rgba(71, 48, 24, 0.18)";
-  context.shadowBlur = 22;
+  context.shadowColor = "rgba(71, 48, 24, 0.12)";
+  context.shadowBlur = 20;
   context.shadowOffsetY = 8;
-  roundRectPath(context, badgeX, badgeY, badgeWidth, badgeHeight, badgeRadius);
-  context.fillStyle = "#FFF8ED";
+  roundRectPath(context, qrCardX, qrCardY, qrCardSize, qrCardSize, qrCardRadius);
+  context.fillStyle = CHART_SHARE_QR_CARD_FILL;
   context.fill();
   context.restore();
 
-  roundRectPath(context, badgeX, badgeY, badgeWidth, badgeHeight, badgeRadius);
+  roundRectPath(context, qrCardX, qrCardY, qrCardSize, qrCardSize, qrCardRadius);
   context.lineWidth = 2;
-  context.strokeStyle = "rgba(99, 69, 41, 0.14)";
+  context.strokeStyle = "rgba(99, 69, 41, 0.12)";
   context.stroke();
 
-  const logoSize = Math.round(badgeHeight * 0.64);
-  const contentGap = Math.round(badgeHeight * 0.18);
-  const wordmarkHeight = Math.round(badgeHeight * 0.74);
-  const wordmarkWidth = measureBrandWordmarkWidth(wordmarkHeight);
-  const groupWidth = logoSize + contentGap + wordmarkWidth;
-  const groupX = badgeX + (badgeWidth - groupWidth) / 2;
-  const logoY = badgeY + (badgeHeight - logoSize) / 2;
-  drawBrandLogoOnCanvas(context, groupX, logoY, logoSize);
-  await drawBrandWordmark(
-    context,
-    groupX + logoSize + contentGap,
-    badgeY + badgeHeight / 2,
-    wordmarkHeight,
-  );
+  context.imageSmoothingEnabled = false;
+  context.drawImage(qrImage, qrDrawX, qrDrawY, qrDrawSize, qrDrawSize);
+  context.imageSmoothingEnabled = true;
+
+  if (renderStyle === "badge-overlay") {
+    const badgeWidth = Math.round(CHART_SHARE_QR_SIZE * 0.34);
+    const badgeHeight = Math.round(CHART_SHARE_QR_SIZE * 0.135);
+    const badgeX = Math.round((CHART_SHARE_QR_SIZE - badgeWidth) / 2);
+    const badgeY = Math.round((CHART_SHARE_QR_SIZE - badgeHeight) / 2);
+    const badgeRadius = 30;
+
+    context.save();
+    context.shadowColor = "rgba(71, 48, 24, 0.18)";
+    context.shadowBlur = 22;
+    context.shadowOffsetY = 8;
+    roundRectPath(context, badgeX, badgeY, badgeWidth, badgeHeight, badgeRadius);
+    context.fillStyle = "#FFF8ED";
+    context.fill();
+    context.restore();
+
+    roundRectPath(context, badgeX, badgeY, badgeWidth, badgeHeight, badgeRadius);
+    context.lineWidth = 2;
+    context.strokeStyle = "rgba(99, 69, 41, 0.14)";
+    context.stroke();
+
+    const logoSize = Math.round(badgeHeight * 0.64);
+    const contentGap = Math.round(badgeHeight * 0.18);
+    const wordmarkHeight = Math.round(badgeHeight * 0.74);
+    const wordmarkWidth = measureBrandWordmarkWidth(wordmarkHeight);
+    const groupWidth = logoSize + contentGap + wordmarkWidth;
+    const groupX = badgeX + (badgeWidth - groupWidth) / 2;
+    const logoY = badgeY + (badgeHeight - logoSize) / 2;
+    drawBrandLogoOnCanvas(context, groupX, logoY, logoSize);
+    await drawBrandWordmark(
+      context,
+      groupX + logoSize + contentGap,
+      badgeY + badgeHeight / 2,
+      wordmarkHeight,
+    );
+  }
 
   return await canvasToBlob(canvas);
 }
@@ -1560,7 +1672,7 @@ export default function App() {
 
     setChartShareQrBusy(true);
     try {
-      const qrBlob = await buildChartShareQrBlob(chartShareUrl);
+      const qrBlob = await buildChartShareQrBlob(chartShareUrl, t.errorChartQrTooLarge);
       const baseName = normalizeDownloadBaseName(
         chartExportTitle || stripFileExtension(result?.fileName ?? ""),
       );
