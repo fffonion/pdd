@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SwitchRow } from "./controls";
 import {
   PindouBoardThemeButtons,
@@ -7,6 +7,17 @@ import {
 import type { Messages } from "../lib/i18n";
 import type { PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
+
+function formatChartCodeSize(byteLength: number) {
+  if (byteLength < 1024) {
+    return `${byteLength} B`;
+  }
+
+  const kilobytes = byteLength / 1024;
+  const roundedKilobytes =
+    kilobytes >= 10 ? Math.round(kilobytes) : Math.round(kilobytes * 10) / 10;
+  return `${roundedKilobytes} KB`;
+}
 
 export function ChartSettingsTab({
   t,
@@ -25,6 +36,10 @@ export function ChartSettingsTab({
   onChartLockEditingChange,
   chartIncludeGuides,
   onChartIncludeGuidesChange,
+  chartShowColorLabels,
+  onChartShowColorLabelsChange,
+  chartGaplessCells,
+  onChartGaplessCellsChange,
   chartIncludeBoardPattern,
   onChartIncludeBoardPatternChange,
   chartBoardTheme,
@@ -61,6 +76,10 @@ export function ChartSettingsTab({
   onChartLockEditingChange: (value: boolean) => void;
   chartIncludeGuides: boolean;
   onChartIncludeGuidesChange: (value: boolean) => void;
+  chartShowColorLabels: boolean;
+  onChartShowColorLabelsChange: (value: boolean) => void;
+  chartGaplessCells: boolean;
+  onChartGaplessCellsChange: (value: boolean) => void;
   chartIncludeBoardPattern: boolean;
   onChartIncludeBoardPatternChange: (value: boolean) => void;
   chartBoardTheme: PindouBoardTheme;
@@ -83,12 +102,14 @@ export function ChartSettingsTab({
 }) {
   const theme = getThemeClasses(isDark);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsColumnRef = useRef<HTMLDivElement | null>(null);
+  const [rightSidebarHeight, setRightSidebarHeight] = useState<number | null>(null);
   const chartSectionClassName = clsx(
     "rounded-md border p-3",
     isDark ? "border-white/12 bg-white/[0.035]" : "border-stone-300 bg-white/78",
   );
   const chartPanelClassName = clsx(
-    "flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0",
+    "flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0 xl:overflow-hidden",
     isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78",
   );
   const chartPreviewClassName = clsx(
@@ -101,6 +122,11 @@ export function ChartSettingsTab({
       ? "border-white/10 bg-[#110d0b] text-stone-200"
       : "border-stone-300 bg-[#f6efe2] text-stone-800",
   );
+  const chartShareCodeBytes =
+    chartShareCode && typeof TextEncoder !== "undefined"
+      ? new TextEncoder().encode(chartShareCode).length
+      : 0;
+  const chartShareCodeSizeText = formatChartCodeSize(chartShareCodeBytes);
   const boardThemeLabels: Record<PindouBoardTheme, string> = {
     none: t.pindouBoardThemeNone ?? "无底纹",
     gray: t.pindouBoardThemeGray ?? "灰色系",
@@ -109,10 +135,45 @@ export function ChartSettingsTab({
     blue: t.pindouBoardThemeBlue ?? "蓝色系",
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function syncRightSidebarHeight() {
+      if (window.innerWidth < 1280 || !settingsColumnRef.current) {
+        setRightSidebarHeight((previous) => (previous === null ? previous : null));
+        return;
+      }
+
+      const nextHeight = Math.ceil(settingsColumnRef.current.getBoundingClientRect().height);
+      setRightSidebarHeight((previous) => (previous === nextHeight ? previous : nextHeight));
+    }
+
+    syncRightSidebarHeight();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", syncRightSidebarHeight);
+      return () => {
+        window.removeEventListener("resize", syncRightSidebarHeight);
+      };
+    }
+
+    const observer = new ResizeObserver(() => syncRightSidebarHeight());
+    if (settingsColumnRef.current) {
+      observer.observe(settingsColumnRef.current);
+    }
+    window.addEventListener("resize", syncRightSidebarHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", syncRightSidebarHeight);
+    };
+  }, []);
+
   return (
     <section className="flex w-full flex-col overflow-visible">
-      <div className="grid grid-cols-1 gap-4 px-3 py-3 sm:gap-5 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)] xl:items-stretch">
-        <div className="flex flex-col gap-4 xl:h-full xl:self-stretch">
+      <div className="grid grid-cols-1 gap-4 px-3 py-3 sm:gap-5 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)] xl:items-start">
+        <div ref={settingsColumnRef} className="flex flex-col gap-4 xl:self-start">
           <label className="flex flex-col gap-2">
             <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsChartTitle}</span>
             <input
@@ -192,6 +253,28 @@ export function ChartSettingsTab({
           </div>
 
           <div className={chartSectionClassName}>
+            <SwitchRow
+              id="chart-show-color-labels"
+              title={t.chartSettingsShowColorLabels}
+              description={t.chartSettingsShowColorLabelsDescription}
+              checked={chartShowColorLabels}
+              onCheckedChange={onChartShowColorLabelsChange}
+              isDark={isDark}
+            />
+          </div>
+
+          <div className={chartSectionClassName}>
+            <SwitchRow
+              id="chart-gapless-cells"
+              title={t.chartSettingsGaplessCells}
+              description={t.chartSettingsGaplessCellsDescription}
+              checked={chartGaplessCells}
+              onCheckedChange={onChartGaplessCellsChange}
+              isDark={isDark}
+            />
+          </div>
+
+          <div className={chartSectionClassName}>
             <div className="flex flex-col gap-3">
               <SwitchRow
                 id="chart-include-board-pattern"
@@ -263,7 +346,17 @@ export function ChartSettingsTab({
 
         </div>
 
-        <aside className="order-last flex flex-col gap-3 xl:h-full xl:self-stretch">
+        <aside
+          className="order-last flex min-h-0 flex-col gap-3 xl:self-start xl:overflow-hidden"
+          style={
+            rightSidebarHeight
+              ? {
+                  height: `${rightSidebarHeight}px`,
+                  maxHeight: `${rightSidebarHeight}px`,
+                }
+              : undefined
+          }
+        >
           <div className={clsx(chartPanelClassName, "xl:flex-[2_1_0%]")}>
             <div className="flex items-center justify-between gap-3">
               <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
@@ -325,9 +418,14 @@ export function ChartSettingsTab({
           </div>
           <div className={clsx(chartPanelClassName, "xl:flex-[1_1_0%]")}>
             <div className="flex items-center justify-between gap-3">
-              <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
-                {t.chartSettingsChartCode}
-              </span>
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+                  {t.chartSettingsChartCode}
+                </span>
+                <span className={clsx("shrink-0 text-xs", theme.cardMuted)}>
+                  {t.chartSettingsChartCodeSize} {chartShareCodeSizeText}
+                </span>
+              </div>
               <div className="flex shrink-0 items-center gap-2">
                 <button
                   className={clsx(

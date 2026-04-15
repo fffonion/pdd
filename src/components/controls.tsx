@@ -281,43 +281,50 @@ export function SliderRow({
   max,
   step,
   disabled,
+  accessory,
   onValueChange,
   isDark,
 }: {
   id: string;
-  label: string;
+  label?: string;
   value: number;
   min: number;
   max: number;
   step: number;
   disabled?: boolean;
+  accessory?: ReactNode;
   onValueChange: (value: number) => void;
   isDark: boolean;
 }) {
   const theme = getThemeClasses(isDark);
   return (
     <div className={clsx("space-y-3", disabled && "opacity-45")}>
-      <div className="flex items-center justify-between gap-3">
-        <Label.Root className={clsx("text-xs font-semibold uppercase tracking-[0.14em]", theme.cardMuted)} htmlFor={id}>
-          {label}
-        </Label.Root>
+      <div className={clsx("flex gap-3", label ? "items-center justify-between" : "justify-end")}>
+        {label ? (
+          <Label.Root className={clsx("text-xs font-semibold uppercase tracking-[0.14em]", theme.cardMuted)} htmlFor={id}>
+            {label}
+          </Label.Root>
+        ) : null}
         <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{value}</span>
       </div>
-      <Slider.Root
-        id={id}
-        className="relative flex h-5 touch-none select-none items-center"
-        disabled={disabled}
-        max={max}
-        min={min}
-        step={step}
-        value={[value]}
-        onValueChange={(next) => onValueChange(next[0] ?? value)}
-      >
-        <Slider.Track className={clsx("relative h-2 grow rounded-full", theme.sliderTrack)}>
-          <Slider.Range className={clsx("absolute h-full rounded-full", theme.sliderRange)} />
-        </Slider.Track>
-        <Slider.Thumb className={clsx("block h-5 w-5 rounded-full border shadow outline-none", theme.sliderThumb)} />
-      </Slider.Root>
+      <div className="flex items-center gap-2">
+        <Slider.Root
+          id={id}
+          className="relative flex h-5 flex-1 touch-none select-none items-center"
+          disabled={disabled}
+          max={max}
+          min={min}
+          step={step}
+          value={[value]}
+          onValueChange={(next) => onValueChange(next[0] ?? value)}
+        >
+          <Slider.Track className={clsx("relative h-2 grow rounded-full", theme.sliderTrack)}>
+            <Slider.Range className={clsx("absolute h-full rounded-full", theme.sliderRange)} />
+          </Slider.Track>
+          <Slider.Thumb className={clsx("block h-5 w-5 rounded-full border shadow outline-none", theme.sliderThumb)} />
+        </Slider.Root>
+        {accessory ? <div className="shrink-0">{accessory}</div> : null}
+      </div>
     </div>
   );
 }

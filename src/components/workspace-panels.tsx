@@ -85,6 +85,10 @@ export function WorkspacePanels({
   onChartLockEditingChange,
   chartIncludeGuides,
   onChartIncludeGuidesChange,
+  chartShowColorLabels,
+  onChartShowColorLabelsChange,
+  chartGaplessCells,
+  onChartGaplessCellsChange,
   chartIncludeBoardPattern,
   onChartIncludeBoardPatternChange,
   chartBoardTheme,
@@ -185,6 +189,10 @@ export function WorkspacePanels({
   onChartLockEditingChange: (value: boolean) => void;
   chartIncludeGuides: boolean;
   onChartIncludeGuidesChange: (value: boolean) => void;
+  chartShowColorLabels: boolean;
+  onChartShowColorLabelsChange: (value: boolean) => void;
+  chartGaplessCells: boolean;
+  onChartGaplessCellsChange: (value: boolean) => void;
   chartIncludeBoardPattern: boolean;
   onChartIncludeBoardPatternChange: (value: boolean) => void;
   chartBoardTheme: PindouBoardTheme;
@@ -291,6 +299,10 @@ export function WorkspacePanels({
             onChartLockEditingChange={onChartLockEditingChange}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={onChartIncludeGuidesChange}
+            chartShowColorLabels={chartShowColorLabels}
+            onChartShowColorLabelsChange={onChartShowColorLabelsChange}
+            chartGaplessCells={chartGaplessCells}
+            onChartGaplessCellsChange={onChartGaplessCellsChange}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
             onChartIncludeBoardPatternChange={onChartIncludeBoardPatternChange}
             chartBoardTheme={chartBoardTheme}
@@ -406,6 +418,10 @@ export function WorkspacePanels({
           onChartLockEditingChange={onChartLockEditingChange}
           chartIncludeGuides={chartIncludeGuides}
           onChartIncludeGuidesChange={onChartIncludeGuidesChange}
+          chartShowColorLabels={chartShowColorLabels}
+          onChartShowColorLabelsChange={onChartShowColorLabelsChange}
+          chartGaplessCells={chartGaplessCells}
+          onChartGaplessCellsChange={onChartGaplessCellsChange}
           chartIncludeBoardPattern={chartIncludeBoardPattern}
           onChartIncludeBoardPatternChange={onChartIncludeBoardPatternChange}
           chartBoardTheme={chartBoardTheme}

@@ -6,6 +6,22 @@ import { getThemeClasses } from "../lib/theme";
 
 const EMPTY_SELECTION_LABEL = "__EMPTY__";
 
+export interface HoneycombColorOption {
+  label: string;
+  displayLabel: string;
+  hex: string | null;
+  radiusScale?: number;
+}
+
+interface HoneycombLayoutCell {
+  sourceLabel: string;
+  label: string;
+  hex: string | null;
+  radiusScale: number;
+  strokeWidth: number;
+  points: string;
+}
+
 export function ColorPickerPopup({
   t,
   isDark,
@@ -65,18 +81,14 @@ export function ColorPickerPanel({
   isDark: boolean;
   selectedLabel: string;
   filterText: string;
-  options: Array<{ label: string; displayLabel: string; hex: string | null }>;
+  options: HoneycombColorOption[];
   onFilterTextChange: (value: string) => void;
   onSelectLabel: (label: string) => void;
   popupRef: RefObject<HTMLDivElement | null>;
   popupStyle: { left: number; top: number; width: number; height: number };
 }) {
-  const theme = getThemeClasses(isDark);
   const popupInnerHeight = Math.max(220, popupStyle.height - 88);
-  const honeycombLayout = useMemo(
-    () => buildHoneycombLayout(options, popupStyle.width, popupInnerHeight),
-    [options, popupInnerHeight, popupStyle.width],
-  );
+  const theme = getThemeClasses(isDark);
 
   return (
     <div
@@ -102,48 +114,82 @@ export function ColorPickerPanel({
         onChange={(event) => onFilterTextChange(event.target.value)}
       />
       <div className="mt-4 min-h-0 flex-1 overflow-auto pr-1">
-        {honeycombLayout.cells.length ? (
-          <svg
-            className="mx-auto block h-auto max-w-full"
-            viewBox={`0 0 ${honeycombLayout.width} ${honeycombLayout.height}`}
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            {honeycombLayout.cells.map((cell) => (
-              <g key={cell.label} className="cursor-pointer" onClick={() => onSelectLabel(cell.sourceLabel)}>
-                <title>{cell.label}</title>
-                <polygon
-                  fill={cell.hex ?? "transparent"}
-                  points={cell.points}
-                  stroke={isDark ? "rgba(17, 12, 9, 0.48)" : "rgba(255, 255, 255, 0.75)"}
-                  strokeWidth={1}
-                />
-                {!cell.hex ? (
-                  <polygon
-                    fill="none"
-                    points={cell.points}
-                    stroke={
-                      isDark
-                        ? "rgba(168, 162, 158, 0.95)"
-                        : "rgba(120, 113, 108, 0.95)"
-                    }
-                    strokeDasharray="3 2"
-                    strokeWidth={1.2}
-                  />
-                ) : null}
-                {selectedLabel === cell.sourceLabel ? (
-                  <polygon
-                    fill="none"
-                    points={cell.points}
-                    stroke={isDark ? "#FFFFFF" : "#111111"}
-                    strokeWidth={2.6}
-                  />
-                ) : null}
-              </g>
-            ))}
-          </svg>
-        ) : null}
+        <HoneycombColorGrid
+          isDark={isDark}
+          selectedLabel={selectedLabel}
+          options={options}
+          width={popupStyle.width}
+          height={popupInnerHeight}
+          onSelectLabel={onSelectLabel}
+        />
       </div>
     </div>
+  );
+}
+
+export function HoneycombColorGrid({
+  isDark,
+  selectedLabel,
+  options,
+  width,
+  height,
+  onSelectLabel,
+}: {
+  isDark: boolean;
+  selectedLabel: string;
+  options: HoneycombColorOption[];
+  width: number;
+  height: number;
+  onSelectLabel: (label: string) => void;
+}) {
+  const honeycombLayout = useMemo(
+    () => buildHoneycombLayout(options, width, height),
+    [options, width, height],
+  );
+
+  if (!honeycombLayout.cells.length) {
+    return null;
+  }
+
+  return (
+    <svg
+      className="mx-auto block h-auto max-w-full"
+      viewBox={`0 0 ${honeycombLayout.width} ${honeycombLayout.height}`}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {honeycombLayout.cells.map((cell) => (
+        <g key={cell.sourceLabel} className="cursor-pointer" onClick={() => onSelectLabel(cell.sourceLabel)}>
+          <title>{cell.label}</title>
+          <polygon
+            fill={cell.hex ?? "transparent"}
+            points={cell.points}
+            stroke={isDark ? "rgba(17, 12, 9, 0.48)" : "rgba(255, 255, 255, 0.75)"}
+            strokeWidth={cell.strokeWidth}
+          />
+          {!cell.hex ? (
+            <polygon
+              fill="none"
+              points={cell.points}
+              stroke={
+                isDark
+                  ? "rgba(168, 162, 158, 0.95)"
+                  : "rgba(120, 113, 108, 0.95)"
+              }
+              strokeDasharray="3 2"
+              strokeWidth={1.2 * cell.radiusScale}
+            />
+          ) : null}
+          {selectedLabel === cell.sourceLabel ? (
+            <polygon
+              fill="none"
+              points={cell.points}
+              stroke={isDark ? "#FFFFFF" : "#111111"}
+              strokeWidth={2.6 * cell.radiusScale}
+            />
+          ) : null}
+        </g>
+      ))}
+    </svg>
   );
 }
 
@@ -188,7 +234,7 @@ export function summarizeStageColors(
 }
 
 function buildHoneycombLayout(
-  options: Array<{ label: string; displayLabel: string; hex: string | null }>,
+  options: HoneycombColorOption[],
   popupWidth: number,
   popupHeight: number,
 ) {
@@ -196,14 +242,14 @@ function buildHoneycombLayout(
     return {
       width: 120,
       height: 100,
-      cells: [] as Array<{ sourceLabel: string; label: string; hex: string | null; points: string }>,
+      cells: [] as HoneycombLayoutCell[],
     };
   }
 
   const paddingX = 12;
   const paddingY = 12;
   const positions = buildHoneycombSpiralPositions(options.length);
-  const bounds = getHoneycombBounds(positions);
+  const bounds = getHoneycombBounds(positions, options);
   const availableWidth = Math.max(140, popupWidth - paddingX * 2);
   const availableHeight = Math.max(120, popupHeight - paddingY * 2);
   const widthUnits = Math.max(1, bounds.maxX - bounds.minX);
@@ -222,11 +268,14 @@ function buildHoneycombLayout(
     const [unitX, unitY] = axialToUnitPoint(position.q, position.r);
     const centerX = centerOffsetX + unitX * radius;
     const centerY = centerOffsetY + unitY * radius;
+    const radiusScale = option.radiusScale ?? 1;
     return {
       sourceLabel: option.label,
       label: option.displayLabel,
       hex: option.hex,
-      points: buildHexagonPoints(centerX, centerY, radius),
+      radiusScale,
+      strokeWidth: Math.max(1, radiusScale),
+      points: buildHexagonPoints(centerX, centerY, radius * radiusScale),
     };
   });
 
@@ -287,18 +336,23 @@ function axialToUnitPoint(q: number, r: number) {
   return [Math.sqrt(3) * (q + r / 2), 1.5 * r] as const;
 }
 
-function getHoneycombBounds(positions: Array<{ q: number; r: number }>) {
+function getHoneycombBounds(
+  positions: Array<{ q: number; r: number }>,
+  options: HoneycombColorOption[],
+) {
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
 
-  for (const position of positions) {
+  for (let index = 0; index < positions.length; index += 1) {
+    const position = positions[index];
+    const radiusScale = options[index]?.radiusScale ?? 1;
     const [x, y] = axialToUnitPoint(position.q, position.r);
-    minX = Math.min(minX, x - Math.sqrt(3) / 2);
-    maxX = Math.max(maxX, x + Math.sqrt(3) / 2);
-    minY = Math.min(minY, y - 1);
-    maxY = Math.max(maxY, y + 1);
+    minX = Math.min(minX, x - (Math.sqrt(3) / 2) * radiusScale);
+    maxX = Math.max(maxX, x + (Math.sqrt(3) / 2) * radiusScale);
+    minY = Math.min(minY, y - radiusScale);
+    maxY = Math.max(maxY, y + radiusScale);
   }
 
   return { minX, maxX, minY, maxY };

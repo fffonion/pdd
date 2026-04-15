@@ -46,6 +46,10 @@ export interface Messages {
   tolerance: string;
   preSharpenTitle: string;
   preSharpenDescription: string;
+  fftEdgeEnhanceTitle: string;
+  fftEdgeEnhanceDescription: string;
+  edgeColorAuto: string;
+  edgeColorOverride: string;
   strength: string;
   generateChart: string;
   processing: string;
@@ -70,6 +74,7 @@ export interface Messages {
   chartSettingsPreview: string;
   chartSettingsPreviewEmpty: string;
   chartSettingsChartCode: string;
+  chartSettingsChartCodeSize: string;
   chartSettingsChartCodePlaceholder: string;
   chartSettingsCopyChartLink: string;
   chartSettingsCopyChartLinkCopied: string;
@@ -88,6 +93,10 @@ export interface Messages {
   chartSettingsLockEditingDescription: string;
   chartSettingsIncludeGuides: string;
   chartSettingsIncludeGuidesDescription: string;
+  chartSettingsShowColorLabels: string;
+  chartSettingsShowColorLabelsDescription: string;
+  chartSettingsGaplessCells: string;
+  chartSettingsGaplessCellsDescription: string;
   chartSettingsIncludeBoardPattern: string;
   chartSettingsIncludeLegend: string;
   chartSettingsIncludeLegendDescription: string;
@@ -120,7 +129,6 @@ export interface Messages {
   toolZoom?: string;
   canvasCropCancel: string;
   canvasCropConfirm: string;
-  canvasCropHint: string;
   toolUndo: string;
   toolRedo: string;
   selectedColor: string;
@@ -207,8 +215,12 @@ export const messages: Record<Locale, Messages> = {
     reduceColorsTitle: "归并近似颜色",
     reduceColorsDescription: "在调色板匹配之前，先合并人眼不易区分的逻辑颜色。",
     tolerance: "容差",
-    preSharpenTitle: "预锐化",
-    preSharpenDescription: "只在普通图片转像素图时生效，用来减少糊边和晕边。",
+    preSharpenTitle: "后锐化",
+    preSharpenDescription: "在边缘增强之后做局部锐化，收紧轮廓，减少缩图带来的晕边。",
+    fftEdgeEnhanceTitle: "边缘增强",
+    fftEdgeEnhanceDescription: "对于细边框图像，检测勾线桥接断边，让拼豆轮廓更连续顺滑。",
+    edgeColorAuto: "自动",
+    edgeColorOverride: "边缘颜色",
     strength: "强度",
     generateChart: "图纸已更新",
     processing: "处理中...",
@@ -233,6 +245,7 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsPreview: "预览图",
     chartSettingsPreviewEmpty: "设置图纸后，这里会显示导出预览。",
     chartSettingsChartCode: "图纸码",
+    chartSettingsChartCodeSize: "长度",
     chartSettingsChartCodePlaceholder: "",
     chartSettingsCopyChartLink: "复制链接",
     chartSettingsCopyChartLinkCopied: "链接已复制",
@@ -251,6 +264,10 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsLockEditingDescription: "导入这张导出的图纸后，将无法编辑和重新导出，只能进入拼豆模式。",
     chartSettingsIncludeGuides: "添加参考线",
     chartSettingsIncludeGuidesDescription: "关闭后会同时隐藏 5/10 格参考线和坐标数字。",
+    chartSettingsShowColorLabels: "显示颜色标签",
+    chartSettingsShowColorLabelsDescription: "控制每个格子里的色号文字是否显示。",
+    chartSettingsGaplessCells: "像素画模式",
+    chartSettingsGaplessCellsDescription: "不绘制灰色缝隙，并隐藏边框与头部信息，让图纸更像纯像素画。",
     chartSettingsIncludeBoardPattern: "添加底纹",
     chartSettingsIncludeLegend: "添加色卡",
     chartSettingsIncludeLegendDescription: "控制图纸底部的颜色详情和数量统计。",
@@ -279,7 +296,6 @@ export const messages: Record<Locale, Messages> = {
     toolRedo: "重做",
     canvasCropCancel: "取消",
     canvasCropConfirm: "确认裁切",
-    canvasCropHint: "拖拽选择画布范围，裁切会自动吸附到像素格。",
     selectedColor: "当前颜色",
     emptyPixel: "空像素",
     paletteTitle: "调色板",
@@ -364,8 +380,13 @@ export const messages: Record<Locale, Messages> = {
     reduceColorsTitle: "Reduce Colors",
     reduceColorsDescription: "Merge logical colors that are visually close before palette matching.",
     tolerance: "Tolerance",
-    preSharpenTitle: "Pre-Sharpen",
-    preSharpenDescription: "Used only when converting a normal image into pixel art to keep edges cleaner.",
+    preSharpenTitle: "Post-Sharpen",
+    preSharpenDescription: "Runs after edge enhancement to tighten outlines and reduce downsampling halos.",
+    fftEdgeEnhanceTitle: "Edge Enhance",
+    fftEdgeEnhanceDescription:
+      "For thin-outline images, detects strokes and bridges broken edges so bead contours stay more continuous and smooth.",
+    edgeColorAuto: "Auto",
+    edgeColorOverride: "Edge Color",
     strength: "Strength",
     generateChart: "Chart Updated",
     processing: "Processing...",
@@ -390,6 +411,7 @@ export const messages: Record<Locale, Messages> = {
     chartSettingsPreview: "Preview",
     chartSettingsPreviewEmpty: "The exported chart preview appears here.",
     chartSettingsChartCode: "Chart Code",
+    chartSettingsChartCodeSize: "Size",
     chartSettingsChartCodePlaceholder: "",
     chartSettingsCopyChartLink: "Copy Link",
     chartSettingsCopyChartLinkCopied: "Link Copied",
@@ -410,6 +432,12 @@ export const messages: Record<Locale, Messages> = {
       "When this exported chart is imported later, it can only open in Pindou Mode and cannot be edited or exported again.",
     chartSettingsIncludeGuides: "Show Guides",
     chartSettingsIncludeGuidesDescription: "Turning this off also hides axis labels and 5/10-grid guide lines.",
+    chartSettingsShowColorLabels: "Show Color Labels",
+    chartSettingsShowColorLabelsDescription:
+      "Controls whether each cell shows its color code text.",
+    chartSettingsGaplessCells: "Pixel Art Mode",
+    chartSettingsGaplessCellsDescription:
+      "Removes gray gaps and hides the frame plus header details so the chart exports closer to raw pixel art.",
     chartSettingsIncludeBoardPattern: "Show Board Pattern",
     chartSettingsIncludeLegend: "Show Legend",
     chartSettingsIncludeLegendDescription: "Controls the color list and counts at the bottom of the exported chart.",
@@ -438,7 +466,6 @@ export const messages: Record<Locale, Messages> = {
     toolZoom: "Zoom",
     canvasCropCancel: "Cancel",
     canvasCropConfirm: "Apply Crop",
-    canvasCropHint: "Drag to select a canvas area. The selection snaps to pixel cells.",
     toolUndo: "Undo",
     toolRedo: "Redo",
     selectedColor: "Selected Color",

@@ -638,6 +638,10 @@ export default function App() {
   const [reduceTolerance, setReduceTolerance] = useState(16);
   const [preSharpen, setPreSharpen] = useState(true);
   const [preSharpenStrength, setPreSharpenStrength] = useState(20);
+  const [fftEdgeEnhance, setFftEdgeEnhance] = useState(true);
+  const [fftEdgeEnhanceTouched, setFftEdgeEnhanceTouched] = useState(false);
+  const [fftEdgeEnhanceStrength, setFftEdgeEnhanceStrength] = useState(50);
+  const [fftEdgeEnhanceOverrideLabel, setFftEdgeEnhanceOverrideLabel] = useState<string | null>(null);
   const [editTool, setEditTool] = useState<EditTool>("pan");
   const [canvasCropSelection, setCanvasCropSelection] = useState<CanvasCropRect | null>(null);
   const [editZoom, setEditZoom] = useState(1);
@@ -671,6 +675,8 @@ export default function App() {
   const [chartSaveMetadata, setChartSaveMetadata] = useState(true);
   const [chartLockEditing, setChartLockEditing] = useState(false);
   const [chartIncludeGuides, setChartIncludeGuides] = useState(true);
+  const [chartShowColorLabels, setChartShowColorLabels] = useState(true);
+  const [chartGaplessCells, setChartGaplessCells] = useState(false);
   const [chartIncludeBoardPattern, setChartIncludeBoardPattern] = useState(false);
   const [chartBoardTheme, setChartBoardTheme] = useState<PindouBoardTheme>("gray");
   const [chartIncludeLegend, setChartIncludeLegend] = useState(true);
@@ -918,6 +924,11 @@ export default function App() {
     setReduceColors(nextReduceColors);
   }
 
+  function handleFftEdgeEnhanceChange(nextFftEdgeEnhance: boolean) {
+    setFftEdgeEnhanceTouched(true);
+    setFftEdgeEnhance(nextFftEdgeEnhance);
+  }
+
   function handleEditToolChange(nextTool: EditTool) {
     paintActiveRef.current = false;
     if (nextTool === "crop") {
@@ -1007,6 +1018,9 @@ export default function App() {
     setFollowSourceRatio(true);
     setReduceColors(true);
     setReduceColorsTouched(false);
+    setFftEdgeEnhance(true);
+    setFftEdgeEnhanceTouched(false);
+    setFftEdgeEnhanceOverrideLabel(null);
     setCropRect(null);
     setCropMode(false);
     setSourceSize(null);
@@ -1694,6 +1708,8 @@ export default function App() {
       saveMetadata: effectiveChartSaveMetadata,
       lockEditing: chartLockEditing,
       includeGuides: chartIncludeGuides,
+      showColorLabels: chartShowColorLabels,
+      gaplessCells: chartGaplessCells,
       includeBoardPattern: chartIncludeBoardPattern,
       boardTheme: chartBoardTheme,
       includeLegend: chartIncludeLegend,
@@ -1874,6 +1890,8 @@ export default function App() {
     effectiveChartSaveMetadata,
     chartLockEditing,
     chartIncludeGuides,
+    chartShowColorLabels,
+    chartGaplessCells,
     chartIncludeBoardPattern,
     chartBoardTheme,
     chartIncludeLegend,
@@ -2082,6 +2100,12 @@ export default function App() {
   }, [colorSystemId]);
 
   useEffect(() => {
+    setFftEdgeEnhanceOverrideLabel((previous) =>
+      previous && paletteOptions.some((entry) => entry.label === previous) ? previous : null,
+    );
+  }, [colorSystemId, paletteOptions]);
+
+  useEffect(() => {
     if (gridMode !== "manual" || !followSourceRatio || !activeAspectRatio) {
       return;
     }
@@ -2186,6 +2210,10 @@ export default function App() {
             reduceTolerance,
             preSharpen,
             preSharpenStrength,
+            applyAutoFftEdgeEnhanceDefault: !fftEdgeEnhanceTouched,
+            fftEdgeEnhance,
+            fftEdgeEnhanceStrength,
+            fftEdgeEnhanceOverrideLabel,
             messages: {
               nonPixelArtError: t.errorNonPixelArt,
               manualGridRequired: t.errorManualGridRequired,
@@ -2260,6 +2288,12 @@ export default function App() {
           setCanvasCropSelection(null);
           if (!reduceColorsTouched && reduceColors !== processed.effectiveReduceColors) {
             setReduceColors(processed.effectiveReduceColors);
+          }
+          if (
+            !fftEdgeEnhanceTouched &&
+            fftEdgeEnhance !== processed.effectiveFftEdgeEnhance
+          ) {
+            setFftEdgeEnhance(processed.effectiveFftEdgeEnhance);
           }
           if (processed.colorSystemId !== colorSystemId) {
             setColorSystemId(processed.colorSystemId);
@@ -2343,6 +2377,10 @@ export default function App() {
     reduceTolerance,
     preSharpen,
     preSharpenStrength,
+    fftEdgeEnhance,
+    fftEdgeEnhanceTouched,
+    fftEdgeEnhanceStrength,
+    fftEdgeEnhanceOverrideLabel,
     cropMode,
     cropRect,
     activeAspectRatio,
@@ -2434,6 +2472,10 @@ export default function App() {
             onChartLockEditingChange={setChartLockEditing}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={setChartIncludeGuides}
+            chartShowColorLabels={chartShowColorLabels}
+            onChartShowColorLabelsChange={setChartShowColorLabels}
+            chartGaplessCells={chartGaplessCells}
+            onChartGaplessCellsChange={setChartGaplessCells}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
             onChartIncludeBoardPatternChange={setChartIncludeBoardPattern}
             chartBoardTheme={chartBoardTheme}
@@ -2645,6 +2687,7 @@ export default function App() {
             onGridHeightChange={handleGridHeightChange}
             followSourceRatio={followSourceRatio}
             onFollowSourceRatioChange={setFollowSourceRatio}
+            paletteOptions={paletteOptions}
             reduceColors={reduceColors}
             onReduceColorsChange={handleReduceColorsChange}
             reduceTolerance={reduceTolerance}
@@ -2653,6 +2696,12 @@ export default function App() {
             onPreSharpenChange={setPreSharpen}
             preSharpenStrength={preSharpenStrength}
             onPreSharpenStrengthChange={setPreSharpenStrength}
+            fftEdgeEnhance={fftEdgeEnhance}
+            onFftEdgeEnhanceChange={handleFftEdgeEnhanceChange}
+            fftEdgeEnhanceStrength={fftEdgeEnhanceStrength}
+            fftEdgeEnhanceOverrideLabel={fftEdgeEnhanceOverrideLabel}
+            onFftEdgeEnhanceStrengthChange={setFftEdgeEnhanceStrength}
+            onFftEdgeEnhanceOverrideLabelChange={setFftEdgeEnhanceOverrideLabel}
             onFileSelection={handleFileSelection}
           />
 
@@ -2736,6 +2785,10 @@ export default function App() {
             onChartLockEditingChange={setChartLockEditing}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={setChartIncludeGuides}
+            chartShowColorLabels={chartShowColorLabels}
+            onChartShowColorLabelsChange={setChartShowColorLabels}
+            chartGaplessCells={chartGaplessCells}
+            onChartGaplessCellsChange={setChartGaplessCells}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
             onChartIncludeBoardPatternChange={setChartIncludeBoardPattern}
             chartBoardTheme={chartBoardTheme}

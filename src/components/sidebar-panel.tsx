@@ -1,13 +1,15 @@
 ﻿import * as Tabs from "@radix-ui/react-tabs";
 import clsx from "clsx";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Messages } from "../lib/i18n";
 import type { NormalizedCropRect } from "../lib/chart-processor";
 import { getThemeClasses } from "../lib/theme";
 import { CollapsibleSection, NumberSliderField, SliderRow, SwitchRow } from "./controls";
+import { HoneycombColorGrid, type HoneycombColorOption } from "./pixel-editor-color-picker";
 import { OriginalPreviewCard } from "./preview-cards";
 
 type GridMode = "auto" | "manual";
+const EDGE_COLOR_AUTO_LABEL = "__EDGE_COLOR_AUTO__";
 
 export function SidebarPanel({
   t,
@@ -31,6 +33,7 @@ export function SidebarPanel({
   onGridHeightChange,
   followSourceRatio,
   onFollowSourceRatioChange,
+  paletteOptions,
   reduceColors,
   onReduceColorsChange,
   reduceTolerance,
@@ -39,6 +42,12 @@ export function SidebarPanel({
   onPreSharpenChange,
   preSharpenStrength,
   onPreSharpenStrengthChange,
+  fftEdgeEnhance,
+  onFftEdgeEnhanceChange,
+  fftEdgeEnhanceStrength,
+  fftEdgeEnhanceOverrideLabel,
+  onFftEdgeEnhanceStrengthChange,
+  onFftEdgeEnhanceOverrideLabelChange,
   onFileSelection,
 }: {
   t: Messages;
@@ -62,6 +71,7 @@ export function SidebarPanel({
   onGridHeightChange: (value: string) => void;
   followSourceRatio: boolean;
   onFollowSourceRatioChange: (checked: boolean) => void;
+  paletteOptions: Array<{ label: string; hex: string }>;
   reduceColors: boolean;
   onReduceColorsChange: (checked: boolean) => void;
   reduceTolerance: number;
@@ -70,9 +80,16 @@ export function SidebarPanel({
   onPreSharpenChange: (checked: boolean) => void;
   preSharpenStrength: number;
   onPreSharpenStrengthChange: (value: number) => void;
+  fftEdgeEnhance: boolean;
+  onFftEdgeEnhanceChange: (checked: boolean) => void;
+  fftEdgeEnhanceStrength: number;
+  fftEdgeEnhanceOverrideLabel: string | null;
+  onFftEdgeEnhanceStrengthChange: (value: number) => void;
+  onFftEdgeEnhanceOverrideLabelChange: (value: string | null) => void;
   onFileSelection: (file: File | null) => void;
 }) {
   const theme = getThemeClasses(isDark);
+  const edgeColorPickerRef = useRef<HTMLDivElement | null>(null);
   const [collapsedSections, setCollapsedSections] = useState(() => {
     const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
     return {
@@ -80,6 +97,39 @@ export function SidebarPanel({
       grid: isMobile,
     };
   });
+  const [edgeColorPickerOpen, setEdgeColorPickerOpen] = useState(false);
+  const fftEdgeEnhanceOverrideOption =
+    fftEdgeEnhanceOverrideLabel
+      ? paletteOptions.find((entry) => entry.label === fftEdgeEnhanceOverrideLabel) ?? null
+      : null;
+  const edgeColorButtonTitle = fftEdgeEnhanceOverrideOption
+    ? `${t.edgeColorOverride}: ${fftEdgeEnhanceOverrideOption.label}`
+    : `${t.edgeColorOverride}: ${t.edgeColorAuto}`;
+  const sortedEdgeColorPickerOptions = useMemo(
+    () => [
+      {
+        label: EDGE_COLOR_AUTO_LABEL,
+        displayLabel: t.edgeColorAuto,
+        hex: null,
+      },
+      ...[...paletteOptions]
+        .sort((left, right) => {
+          const leftLuma = getRelativeLuminance(left.hex);
+          const rightLuma = getRelativeLuminance(right.hex);
+          if (leftLuma !== rightLuma) {
+            return leftLuma - rightLuma;
+          }
+          return left.label.localeCompare(right.label);
+        })
+        .map((option) => ({
+          label: option.label,
+          displayLabel: option.label,
+          hex: option.hex,
+          radiusScale: option.label === "H6" ? 1.28 : 1,
+        })),
+    ],
+    [paletteOptions, t.edgeColorAuto],
+  );
 
   function toggleSection(section: keyof typeof collapsedSections) {
     setCollapsedSections((current) => ({
@@ -88,10 +138,25 @@ export function SidebarPanel({
     }));
   }
 
+  useEffect(() => {
+    if (!edgeColorPickerOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!edgeColorPickerRef.current?.contains(event.target as Node)) {
+        setEdgeColorPickerOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [edgeColorPickerOpen]);
+
   return (
     <section
       className={clsx(
-        "scrollbar-none min-h-0 overflow-y-auto rounded-[14px] border p-4 backdrop-blur transition-colors sm:rounded-[16px] sm:p-5 lg:h-full lg:self-start xl:rounded-[18px]",
+        "scrollbar-none min-h-0 overflow-y-auto rounded-[14px] border pb-4 pl-4 pr-3 pt-4 backdrop-blur transition-colors sm:rounded-[16px] sm:pb-5 sm:pl-5 sm:pr-4 sm:pt-5 lg:h-full lg:self-start xl:rounded-[18px]",
         theme.panel,
       )}
     >
@@ -193,13 +258,90 @@ export function SidebarPanel({
             />
             <SliderRow
               id="reduce-tolerance"
-              label={t.tolerance}
               value={reduceTolerance}
               min={0}
               max={255}
               step={1}
               disabled={!reduceColors}
               onValueChange={onReduceToleranceChange}
+              isDark={isDark}
+            />
+
+            <div className={clsx("h-px", theme.divider)} />
+
+            <SwitchRow
+              id="fft-edge-enhance"
+              title={t.fftEdgeEnhanceTitle}
+              description={t.fftEdgeEnhanceDescription}
+              checked={fftEdgeEnhance}
+              onCheckedChange={onFftEdgeEnhanceChange}
+              isDark={isDark}
+            />
+            <SliderRow
+              id="fft-edge-enhance-strength"
+              value={fftEdgeEnhanceStrength}
+              min={0}
+              max={100}
+              step={1}
+              disabled={!fftEdgeEnhance}
+              accessory={
+                <div ref={edgeColorPickerRef} className="relative">
+                  <button
+                    className={clsx(
+                      "flex h-9 w-9 items-center justify-center rounded-full border transition",
+                      fftEdgeEnhanceOverrideOption ? theme.controlButtonActive : theme.pill,
+                      !fftEdgeEnhance && "pointer-events-none opacity-45",
+                    )}
+                    onClick={() => setEdgeColorPickerOpen((current) => !current)}
+                    title={edgeColorButtonTitle}
+                    type="button"
+                  >
+                    {fftEdgeEnhanceOverrideOption ? (
+                      <span
+                        className="h-5 w-5 rounded-full border border-black/10"
+                        style={{ backgroundColor: fftEdgeEnhanceOverrideOption.hex }}
+                      />
+                    ) : (
+                      <span
+                        className={clsx(
+                          "flex h-5 w-5 items-center justify-center rounded-full border border-dashed text-[10px] font-semibold",
+                          theme.cardMuted,
+                        )}
+                      >
+                        A
+                      </span>
+                    )}
+                  </button>
+                  {edgeColorPickerOpen ? (
+                    <div
+                      className={clsx(
+                        "absolute right-0 top-full z-20 mt-2 w-[296px] rounded-[10px] border p-3 shadow-2xl",
+                        theme.controlShell,
+                      )}
+                    >
+                      <div className={clsx("mb-2 text-xs font-semibold uppercase tracking-[0.12em]", theme.cardMuted)}>
+                        {t.edgeColorOverride}
+                      </div>
+                      <div className="max-h-[260px] overflow-auto pr-1">
+                        <HoneycombColorGrid
+                          isDark={isDark}
+                          selectedLabel={fftEdgeEnhanceOverrideLabel ?? EDGE_COLOR_AUTO_LABEL}
+                          options={sortedEdgeColorPickerOptions}
+                          width={296 - 24}
+                          height={240}
+                          onSelectLabel={(label) => {
+                            onFftEdgeEnhanceOverrideLabelChange(
+                              label === EDGE_COLOR_AUTO_LABEL ? null : label,
+                            );
+                            setEdgeColorPickerOpen(false);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              }
+              onValueChange={onFftEdgeEnhanceStrengthChange}
               isDark={isDark}
             />
 
@@ -215,7 +357,6 @@ export function SidebarPanel({
             />
             <SliderRow
               id="pre-sharpen-strength"
-              label={t.strength}
               value={preSharpenStrength}
               min={0}
               max={100}
@@ -229,5 +370,13 @@ export function SidebarPanel({
       </div>
     </section>
   );
+}
+
+function getRelativeLuminance(hex: string) {
+  const normalized = hex.replace("#", "");
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
 }
 

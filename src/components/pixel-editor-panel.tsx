@@ -47,11 +47,10 @@ import {
 import { EditResultSummary } from "./pixel-editor-result-summary";
 import type { Messages } from "../lib/i18n";
 import { type EditableCell, type NormalizedCropRect } from "../lib/chart-processor";
-import { isFullCanvasCropRect, type CanvasCropRect } from "../lib/editor-utils";
+import { isFullCanvasCropRect, type CanvasCropRect, type EditTool } from "../lib/editor-utils";
 import { type PindouBeadShape, type PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 
-type EditTool = "paint" | "erase" | "pick" | "fill" | "pan" | "zoom" | "crop";
 export type EditorPanelMode = "edit" | "pindou" | "chart";
 const EMPTY_SELECTION_LABEL = "__EMPTY__";
 
@@ -136,6 +135,10 @@ export function PixelEditorPanel({
   onChartLockEditingChange,
   chartIncludeGuides,
   onChartIncludeGuidesChange,
+  chartShowColorLabels,
+  onChartShowColorLabelsChange,
+  chartGaplessCells,
+  onChartGaplessCellsChange,
   chartIncludeBoardPattern,
   onChartIncludeBoardPatternChange,
   chartBoardTheme,
@@ -236,6 +239,10 @@ export function PixelEditorPanel({
   onChartLockEditingChange: (value: boolean) => void;
   chartIncludeGuides: boolean;
   onChartIncludeGuidesChange: (value: boolean) => void;
+  chartShowColorLabels: boolean;
+  onChartShowColorLabelsChange: (value: boolean) => void;
+  chartGaplessCells: boolean;
+  onChartGaplessCellsChange: (value: boolean) => void;
   chartIncludeBoardPattern: boolean;
   onChartIncludeBoardPatternChange: (value: boolean) => void;
   chartBoardTheme: PindouBoardTheme;
@@ -634,6 +641,10 @@ export function PixelEditorPanel({
             onChartLockEditingChange={onChartLockEditingChange}
             chartIncludeGuides={chartIncludeGuides}
             onChartIncludeGuidesChange={onChartIncludeGuidesChange}
+            chartShowColorLabels={chartShowColorLabels}
+            onChartShowColorLabelsChange={onChartShowColorLabelsChange}
+            chartGaplessCells={chartGaplessCells}
+            onChartGaplessCellsChange={onChartGaplessCellsChange}
             chartIncludeBoardPattern={chartIncludeBoardPattern}
             onChartIncludeBoardPatternChange={onChartIncludeBoardPatternChange}
             chartBoardTheme={chartBoardTheme}
@@ -1684,7 +1695,6 @@ function ContextToolStrip({
               <Check className="h-4 w-4" />
               <span>{t.canvasCropConfirm}</span>
             </button>
-            <span className={clsx("text-xs", theme.cardMuted)}>{t.canvasCropHint}</span>
           </div>
         ) : null}
         {showPalette ? (
