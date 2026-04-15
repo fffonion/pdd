@@ -214,7 +214,7 @@ export function CanvasStage({
     (effectiveEditTool === "paint" || effectiveEditTool === "erase");
   const showFillCursor = stageMode === "edit" && !spacePanActive && effectiveEditTool === "fill";
   const showPickCursor = stageMode === "edit" && !spacePanActive && effectiveEditTool === "pick";
-  const brushPreviewSize = Math.max(18, Math.round(brushSize * (cellSize + gridGap) * effectiveScale + 10));
+  const brushPreviewSize = Math.max(18, Math.round(brushSize * (cellSize + gridGap) * stageScale + 10));
   const panLimits = useMemo(
     () => calculateStagePanLimits(totalStageWidth, totalStageHeight, stageViewport.width, stageViewport.height),
     [totalStageWidth, totalStageHeight, stageViewport.width, stageViewport.height],
@@ -523,7 +523,7 @@ export function CanvasStage({
 
     function handleWheel(event: WheelEvent) {
       if (stageMode === "edit") {
-        if (!onEditZoomChange || !(event.ctrlKey || event.metaKey)) {
+        if (!onEditZoomChange) {
           return;
         }
 
@@ -710,7 +710,7 @@ export function CanvasStage({
             contentRow < 0 ||
             contentRow >= gridHeight);
         const sourceColumn =
-          stageMode === "pindou" && !isPaddingCell && flipHorizontal
+          !isPaddingCell && flipHorizontal
             ? gridWidth - 1 - contentDisplayColumn
             : contentDisplayColumn;
         const cellIndex =
@@ -765,17 +765,40 @@ export function CanvasStage({
       const sy = overlayCropRect ? overlayCropRect.y * overlayImage.height : 0;
       const sw = overlayCropRect ? overlayCropRect.width * overlayImage.width : overlayImage.width;
       const sh = overlayCropRect ? overlayCropRect.height * overlayImage.height : overlayImage.height;
-      context.drawImage(
-        overlayImage,
-        sx,
-        sy,
-        sw,
-        sh,
-        stageMode === "pindou" ? contentOffsetX : boardX,
-        stageMode === "pindou" ? contentOffsetY : boardY,
-        stageMode === "pindou" ? contentWidth : boardWidth,
-        stageMode === "pindou" ? contentHeight : boardHeight,
-      );
+      const destinationX = stageMode === "pindou" ? contentOffsetX : boardX;
+      const destinationY = stageMode === "pindou" ? contentOffsetY : boardY;
+      const destinationWidth = stageMode === "pindou" ? contentWidth : boardWidth;
+      const destinationHeight = stageMode === "pindou" ? contentHeight : boardHeight;
+
+      if (flipHorizontal) {
+        context.save();
+        context.translate(destinationX + destinationWidth, 0);
+        context.scale(-1, 1);
+        context.drawImage(
+          overlayImage,
+          sx,
+          sy,
+          sw,
+          sh,
+          0,
+          destinationY,
+          destinationWidth,
+          destinationHeight,
+        );
+        context.restore();
+      } else {
+        context.drawImage(
+          overlayImage,
+          sx,
+          sy,
+          sw,
+          sh,
+          destinationX,
+          destinationY,
+          destinationWidth,
+          destinationHeight,
+        );
+      }
     }
 
     if (stageMode === "pindou") {
