@@ -185,7 +185,7 @@ export const messages: Record<Locale, Messages> = {
     themeDark: "深色",
     themeSystem: "跟随系统",
     sourceTitle: "原图",
-    sourceLandingTitle: "导入图片，或者现有图纸。",
+    sourceLandingTitle: "导入图片，或导入现有图纸",
     sourcePrivacyNote: "全部处理都在浏览器内完成，不会上传到服务器。",
     sourceChartCodeTitle: "也可以导入图纸码",
     sourceChartCodePlaceholder: "",
