@@ -133,6 +133,7 @@ export function HoneycombColorGrid({
   options,
   width,
   height,
+  sizeScale = 1,
   onSelectLabel,
 }: {
   isDark: boolean;
@@ -140,11 +141,12 @@ export function HoneycombColorGrid({
   options: HoneycombColorOption[];
   width: number;
   height: number;
+  sizeScale?: number;
   onSelectLabel: (label: string) => void;
 }) {
   const honeycombLayout = useMemo(
-    () => buildHoneycombLayout(options, width, height),
-    [options, width, height],
+    () => buildHoneycombLayout(options, width, height, sizeScale),
+    [options, width, height, sizeScale],
   );
 
   if (!honeycombLayout.cells.length) {
@@ -237,6 +239,7 @@ function buildHoneycombLayout(
   options: HoneycombColorOption[],
   popupWidth: number,
   popupHeight: number,
+  sizeScale: number,
 ) {
   if (!options.length) {
     return {
@@ -254,9 +257,11 @@ function buildHoneycombLayout(
   const availableHeight = Math.max(120, popupHeight - paddingY * 2);
   const widthUnits = Math.max(1, bounds.maxX - bounds.minX);
   const heightUnits = Math.max(1, bounds.maxY - bounds.minY);
+  const minRadius = 2.8 * sizeScale;
+  const maxRadius = 5.2 * sizeScale;
   const radius = Math.max(
-    2.8,
-    Math.min(5.2, availableWidth / widthUnits, availableHeight / heightUnits),
+    minRadius,
+    Math.min(maxRadius, availableWidth / widthUnits, availableHeight / heightUnits),
   );
   const width = Math.max(120, widthUnits * radius + paddingX * 2);
   const height = Math.max(100, heightUnits * radius + paddingY * 2);

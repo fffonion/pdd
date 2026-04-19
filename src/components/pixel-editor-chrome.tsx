@@ -5,6 +5,16 @@ import type { PindouBeadShape, PindouBoardTheme } from "../lib/pindou-board-them
 import { getPindouBoardThemeShades, pindouBoardThemes } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 
+export function getCompactPindouToolbarButtonMetrics() {
+  return {
+    groupGapClass: "gap-[3px]",
+    buttonSizeClass: "h-[30px] w-[30px]",
+    boardSwatchPaddingClass: "p-[3px]",
+    boardSwatchInnerRadiusClass: "rounded-[6px]",
+    iconSizeClass: "h-[16px] w-[16px]",
+  };
+}
+
 export function InlineSliderField({
   id,
   label,
@@ -26,7 +36,7 @@ export function InlineSliderField({
 }) {
   const theme = getThemeClasses(isDark);
   return (
-    <div className={clsx("flex min-w-[116px] shrink-0 items-center gap-2 rounded-md border px-2 py-2 sm:min-w-[210px] sm:gap-3 sm:px-3", theme.pill)}>
+    <div className={clsx("flex min-h-11 min-w-[116px] shrink-0 items-center gap-2 rounded-[10px] border px-2.5 py-2 sm:min-h-0 sm:rounded-md sm:px-3 sm:py-2 sm:min-w-[210px] sm:gap-3", theme.pill)}>
       <label className={clsx("hidden shrink-0 text-sm font-semibold sm:inline", theme.cardTitle)} htmlFor={id}>
         {label}
       </label>
@@ -70,7 +80,7 @@ export function ToolIconButton({
   return (
     <button
       className={clsx(
-        "flex h-10 w-10 shrink-0 items-center justify-center rounded-md border transition xl:h-10 xl:w-10",
+        "flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] border transition sm:h-10 sm:w-10 sm:rounded-md xl:h-10 xl:w-10",
         disabled ? theme.disabledButton : active ? theme.controlButtonActive : theme.pill,
       )}
       disabled={disabled}
@@ -97,27 +107,29 @@ export function PindouBeadShapeButtons({
   onChange: (value: PindouBeadShape) => void;
 }) {
   const theme = getThemeClasses(isDark);
+  const compactMetrics = getCompactPindouToolbarButtonMetrics();
   const shapeIcons: Record<PindouBeadShape, LucideIcon> = {
     square: Square,
     circle: Circle,
   };
 
   return (
-    <div className="flex items-center gap-0.5" aria-label={groupLabel} role="group">
+    <div className={clsx("flex items-center", compactMetrics.groupGapClass)} aria-label={groupLabel} role="group">
       {(["square", "circle"] as const).map((shape) => {
         const Icon = shapeIcons[shape];
         return (
           <button
             key={shape}
             className={clsx(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition",
+              "flex shrink-0 items-center justify-center rounded-[8px] border transition sm:rounded-md",
+              compactMetrics.buttonSizeClass,
               selectedShape === shape ? theme.controlButtonActive : theme.pill,
             )}
             onClick={() => onChange(shape)}
             title={labels[shape]}
             type="button"
           >
-            <Icon className="h-4 w-4" />
+            <Icon className={compactMetrics.iconSizeClass} />
           </button>
         );
       })}
@@ -139,16 +151,19 @@ export function PindouBoardThemeButtons({
   onChange: (value: PindouBoardTheme) => void;
 }) {
   const theme = getThemeClasses(isDark);
+  const compactMetrics = getCompactPindouToolbarButtonMetrics();
 
   return (
-    <div className="flex items-center gap-1" aria-label={groupLabel} role="group">
+    <div className={clsx("flex items-center", compactMetrics.groupGapClass)} aria-label={groupLabel} role="group">
       {pindouBoardThemes.map((boardTheme) => {
         const shades = getPindouBoardThemeShades(boardTheme);
         return (
           <button
             key={boardTheme}
             className={clsx(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border p-1 transition",
+              "flex shrink-0 items-center justify-center rounded-[8px] border transition sm:rounded-md",
+              compactMetrics.buttonSizeClass,
+              compactMetrics.boardSwatchPaddingClass,
               selectedTheme === boardTheme ? theme.controlButtonActive : theme.pill,
             )}
             onClick={() => onChange(boardTheme)}
@@ -156,7 +171,7 @@ export function PindouBoardThemeButtons({
             type="button"
           >
             <span
-              className="h-full w-full rounded-[4px] border border-black/10"
+              className={clsx("h-full w-full border border-black/10", compactMetrics.boardSwatchInnerRadiusClass)}
               style={boardTheme === "none"
                 ? {
                     background: "#FFFFFF",

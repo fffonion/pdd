@@ -194,24 +194,64 @@ export function CanvasStage({
   const cellSize = calculateStageCellSize(displayGridWidth, displayGridHeight, fitViewportWidth, fitViewportHeight);
   const stageWidth = displayGridWidth * cellSize + Math.max(0, displayGridWidth - 1) * gridGap;
   const stageHeight = displayGridHeight * cellSize + Math.max(0, displayGridHeight - 1) * gridGap;
-  const stageScale = calculateStageScale(stageWidth, stageHeight, fitViewportWidth, fitViewportHeight);
-  const effectiveScale = stageMode === "pindou" ? stageScale * pindouZoom : stageScale * editZoom;
-  const scaledCellSize = cellSize * effectiveScale;
-  const scaledGap = gridGap * effectiveScale;
-  const stagePitch = scaledCellSize + scaledGap;
-  const scaledStageWidth = stageWidth * effectiveScale;
-  const scaledStageHeight = stageHeight * effectiveScale;
+  const stageScale = getCanvasStageFitScale({
+    stageMode,
+    stageWidth,
+    stageHeight,
+    availableWidth: fitViewportWidth,
+    availableHeight: fitViewportHeight,
+  });
   const axisGutter = stageMode === "pindou" ? Math.max(22, Math.round(26 * stageScale)) : 0;
-  const topGutter = stageMode === "pindou" ? axisGutter : 0;
-  const leftGutter = stageMode === "pindou" ? axisGutter : 0;
-  const totalStageWidth = scaledStageWidth + leftGutter;
-  const totalStageHeight = scaledStageHeight + topGutter;
+  const {
+    zoomFactor,
+    renderCellSize,
+    renderGap,
+    renderStagePitch,
+    renderStageWidth,
+    renderStageHeight,
+    renderAxisGutter,
+    totalRenderWidth,
+    totalRenderHeight,
+    displayScale,
+    displayCellSize,
+    displayGap,
+    displayStagePitch,
+    displayStageWidth,
+    displayStageHeight,
+    displayAxisGutter,
+    totalDisplayWidth,
+    totalDisplayHeight,
+  } = getCanvasStageZoomMetrics({
+    stageMode,
+    stageScale,
+    editZoom,
+    pindouZoom,
+    stageWidth,
+    stageHeight,
+    cellSize,
+    gridGap,
+    axisGutter,
+  });
+  const stageLayoutSize = getCanvasStageLayoutSize({
+    totalRenderWidth,
+    totalRenderHeight,
+  });
+  const stageSurfaceOffset = getCanvasStageSurfaceOffset({
+    totalRenderWidth,
+    totalRenderHeight,
+    totalDisplayWidth,
+    totalDisplayHeight,
+  });
+  const topGutter = stageMode === "pindou" ? renderAxisGutter : 0;
+  const leftGutter = stageMode === "pindou" ? renderAxisGutter : 0;
+  const displayTopGutter = stageMode === "pindou" ? displayAxisGutter : 0;
+  const displayLeftGutter = stageMode === "pindou" ? displayAxisGutter : 0;
   const canPanStage =
     (stageMode === "pindou" || stageMode === "edit") &&
     stageViewport.width > 0 &&
     stageViewport.height > 0 &&
-    totalStageWidth > 0 &&
-    totalStageHeight > 0;
+    totalDisplayWidth > 0 &&
+    totalDisplayHeight > 0;
   const effectiveEditTool =
     stageMode === "edit" && altPickActive && !spacePanActive ? "pick" : editTool;
   const cropToolActive = stageMode === "edit" && effectiveEditTool === "crop";
@@ -224,10 +264,10 @@ export function CanvasStage({
     (effectiveEditTool === "paint" || effectiveEditTool === "erase");
   const showFillCursor = stageMode === "edit" && !spacePanActive && effectiveEditTool === "fill";
   const showPickCursor = stageMode === "edit" && !spacePanActive && effectiveEditTool === "pick";
-  const brushPreviewSize = Math.max(18, Math.round(brushSize * (cellSize + gridGap) * stageScale + 10));
+  const brushPreviewSize = Math.max(18, Math.round(brushSize * (cellSize + gridGap) * displayScale + 10));
   const panLimits = useMemo(
-    () => calculateStagePanLimits(totalStageWidth, totalStageHeight, stageViewport.width, stageViewport.height),
-    [totalStageWidth, totalStageHeight, stageViewport.width, stageViewport.height],
+    () => calculateStagePanLimits(totalDisplayWidth, totalDisplayHeight, stageViewport.width, stageViewport.height),
+    [totalDisplayWidth, totalDisplayHeight, stageViewport.width, stageViewport.height],
   );
   const hoveredCell = hoveredCellIndex === null ? null : cells[hoveredCellIndex] ?? null;
   const pickPreviewHex = hoveredCell?.hex ?? (isDark ? "#1C1712" : "#F7F4EE");
@@ -243,24 +283,24 @@ export function CanvasStage({
       : canvasCropSelection.left;
 
     return {
-      x: leftGutter + displayColumn * stagePitch,
-      y: topGutter + canvasCropSelection.top * stagePitch,
+      x: leftGutter + displayColumn * renderStagePitch,
+      y: topGutter + canvasCropSelection.top * renderStagePitch,
       width:
-        canvasCropSelection.width * scaledCellSize +
-        Math.max(0, canvasCropSelection.width - 1) * scaledGap,
+        canvasCropSelection.width * renderCellSize +
+        Math.max(0, canvasCropSelection.width - 1) * renderGap,
       height:
-        canvasCropSelection.height * scaledCellSize +
-        Math.max(0, canvasCropSelection.height - 1) * scaledGap,
+        canvasCropSelection.height * renderCellSize +
+        Math.max(0, canvasCropSelection.height - 1) * renderGap,
     };
   }, [
     canvasCropSelection,
     flipHorizontal,
     gridWidth,
     leftGutter,
-    scaledCellSize,
-    scaledGap,
+    renderCellSize,
+    renderGap,
     stageMode,
-    stagePitch,
+    renderStagePitch,
     topGutter,
   ]);
 
@@ -356,12 +396,12 @@ export function CanvasStage({
       clientX,
       clientY,
       stageSurfaceRef.current,
-      leftGutter,
-      topGutter,
-      scaledStageWidth,
-      scaledStageHeight,
-      stagePitch,
-      scaledCellSize,
+      displayLeftGutter,
+      displayTopGutter,
+      displayStageWidth,
+      displayStageHeight,
+      displayStagePitch,
+      displayCellSize,
       pindouPaddingCells,
       gridWidth,
       gridHeight,
@@ -372,12 +412,12 @@ export function CanvasStage({
       clientX,
       clientY,
       stageSurfaceRef.current,
-      leftGutter,
-      topGutter,
-      scaledStageWidth,
-      scaledStageHeight,
-      stagePitch,
-      scaledCellSize,
+      displayLeftGutter,
+      displayTopGutter,
+      displayStageWidth,
+      displayStageHeight,
+      displayStagePitch,
+      displayCellSize,
       pindouPaddingCells,
       gridWidth,
       gridHeight,
@@ -522,7 +562,7 @@ export function CanvasStage({
       element.removeEventListener("touchcancel", handleTouchEnd);
       clearTouchPan();
     };
-  }, [stageMode, canPanStage, effectivePanActive, pindouZoom, onPindouZoomChange, editZoom, onEditZoomChange, cells, focusedLabel, onFocusLabelChange, onPindouStageTap, panLimits, leftGutter, topGutter, scaledStageWidth, scaledStageHeight, stagePitch, scaledCellSize, gridWidth, gridHeight, flipHorizontal]);
+  }, [stageMode, canPanStage, effectivePanActive, pindouZoom, onPindouZoomChange, editZoom, onEditZoomChange, cells, focusedLabel, onFocusLabelChange, onPindouStageTap, panLimits, displayLeftGutter, displayTopGutter, displayStageWidth, displayStageHeight, displayStagePitch, displayCellSize, gridWidth, gridHeight, flipHorizontal]);
 
   useEffect(() => {
     if ((stageMode !== "pindou" && stageMode !== "edit") || !stageViewportRef.current) {
@@ -654,7 +694,7 @@ export function CanvasStage({
       element.removeEventListener("pointercancel", handlePointerEnd);
       clearPan();
     };
-  }, [canPanStage, effectivePanActive, stageMode, cells, focusedLabel, onFocusLabelChange, onPindouStageTap, panLimits, leftGutter, topGutter, scaledStageWidth, scaledStageHeight, stagePitch, scaledCellSize, gridWidth, gridHeight, flipHorizontal]);
+  }, [canPanStage, effectivePanActive, stageMode, cells, focusedLabel, onFocusLabelChange, onPindouStageTap, panLimits, displayLeftGutter, displayTopGutter, displayStageWidth, displayStageHeight, displayStagePitch, displayCellSize, gridWidth, gridHeight, flipHorizontal]);
 
   useEffect(() => {
     const canvas = stageCanvasRef.current;
@@ -662,8 +702,8 @@ export function CanvasStage({
       return;
     }
 
-    const width = Math.max(1, Math.round(totalStageWidth));
-    const height = Math.max(1, Math.round(totalStageHeight));
+    const width = Math.max(1, Math.round(totalRenderWidth));
+    const height = Math.max(1, Math.round(totalRenderHeight));
     const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.round(width * dpr));
     canvas.height = Math.max(1, Math.round(height * dpr));
@@ -681,12 +721,12 @@ export function CanvasStage({
 
     const boardX = leftGutter;
     const boardY = topGutter;
-    const boardWidth = scaledStageWidth;
-    const boardHeight = scaledStageHeight;
-    const contentOffsetX = boardX + pindouPaddingCells * stagePitch;
-    const contentOffsetY = boardY + pindouPaddingCells * stagePitch;
-    const contentWidth = gridWidth * scaledCellSize + Math.max(0, gridWidth - 1) * scaledGap;
-    const contentHeight = gridHeight * scaledCellSize + Math.max(0, gridHeight - 1) * scaledGap;
+    const boardWidth = renderStageWidth;
+    const boardHeight = renderStageHeight;
+    const contentOffsetX = boardX + pindouPaddingCells * renderStagePitch;
+    const contentOffsetY = boardY + pindouPaddingCells * renderStagePitch;
+    const contentWidth = gridWidth * renderCellSize + Math.max(0, gridWidth - 1) * renderGap;
+    const contentHeight = gridHeight * renderCellSize + Math.max(0, gridHeight - 1) * renderGap;
     if (stageMode === "pindou") {
       drawPindouBoardPattern(
         context,
@@ -694,9 +734,9 @@ export function CanvasStage({
         boardY,
         displayGridWidth,
         displayGridHeight,
-        stagePitch,
-        scaledCellSize,
-        scaledGap,
+        renderStagePitch,
+        renderCellSize,
+        renderGap,
         pindouBoardTheme,
       );
     } else {
@@ -728,15 +768,15 @@ export function CanvasStage({
             ? null
             : contentRow * gridWidth + sourceColumn;
         const cell = cellIndex === null ? { label: null, hex: null } : cells[cellIndex] ?? { label: null, hex: null };
-        const x = boardX + displayColumn * stagePitch;
-        const y = boardY + displayRow * stagePitch;
+        const x = boardX + displayColumn * renderStagePitch;
+        const y = boardY + displayRow * renderStagePitch;
         const cellBackground = getStageCellBackgroundColor(cell, stageMode, focusedLabel, isDark);
         if (stageMode === "pindou") {
           drawPindouBead(
             context,
             x,
             y,
-            scaledCellSize,
+            renderCellSize,
             cellBackground,
             isDark,
             pindouBeadShape,
@@ -744,29 +784,29 @@ export function CanvasStage({
           );
         } else {
           context.fillStyle = cellBackground;
-          context.fillRect(x, y, scaledCellSize, scaledCellSize);
+          context.fillRect(x, y, renderCellSize, renderCellSize);
         }
 
         if (stageMode === "pindou" && !isPaddingCell && focusedLabel && cell.label === focusedLabel) {
-          drawPindouBeadFocusRing(context, x, y, scaledCellSize, isDark, pindouBeadShape);
+          drawPindouBeadFocusRing(context, x, y, renderCellSize, isDark, pindouBeadShape);
         }
 
         if (!shouldShowStageCellLabel(cell, stageMode, focusedLabel, showPindouLabels)) {
           continue;
         }
 
-        const labelStyle = getStageCellLabelStyle(cell, stageMode, focusedLabel, isDark, scaledCellSize);
+        const labelStyle = getStageCellLabelStyle(cell, stageMode, focusedLabel, isDark, renderCellSize);
         context.font = `700 ${labelStyle.fontSize} system-ui, sans-serif`;
         context.textAlign = "center";
         context.textBaseline = "middle";
         context.lineJoin = "round";
-        context.lineWidth = Math.max(1, scaledCellSize * 0.1);
+        context.lineWidth = Math.max(1, renderCellSize * 0.1);
         context.strokeStyle = labelStyle.color.includes("255")
           ? "rgba(17,17,17,0.42)"
           : "rgba(255,255,255,0.35)";
-        context.strokeText(cell.label ?? "", x + scaledCellSize / 2, y + scaledCellSize / 2);
+        context.strokeText(cell.label ?? "", x + renderCellSize / 2, y + renderCellSize / 2);
         context.fillStyle = labelStyle.color;
-        context.fillText(cell.label ?? "", x + scaledCellSize / 2, y + scaledCellSize / 2);
+        context.fillText(cell.label ?? "", x + renderCellSize / 2, y + renderCellSize / 2);
       }
     }
 
@@ -820,8 +860,8 @@ export function CanvasStage({
         boardHeight,
         displayGridWidth,
         displayGridHeight,
-        stagePitch,
-        scaledGap,
+        renderStagePitch,
+        renderGap,
       );
     }
 
@@ -836,11 +876,11 @@ export function CanvasStage({
         displayGridHeight,
         stageScale,
         axisGutter,
-        scaledStageWidth,
-        scaledStageHeight,
+        renderStageWidth,
+        renderStageHeight,
       );
     }
-  }, [cells, gridWidth, gridHeight, totalStageWidth, totalStageHeight, leftGutter, topGutter, scaledStageWidth, scaledStageHeight, scaledCellSize, scaledGap, stagePitch, stageScale, stageMode, focusedLabel, isDark, overlayEnabled, overlayImage, overlayCropRect, flipHorizontal, axisGutter, showPindouLabels, pindouBeadShape, pindouBoardTheme, pindouPaddingCells, displayGridWidth, displayGridHeight]);
+  }, [cells, gridWidth, gridHeight, totalRenderWidth, totalRenderHeight, leftGutter, topGutter, renderStageWidth, renderStageHeight, renderCellSize, renderGap, renderStagePitch, stageScale, stageMode, focusedLabel, isDark, overlayEnabled, overlayImage, overlayCropRect, flipHorizontal, axisGutter, showPindouLabels, pindouBeadShape, pindouBoardTheme, pindouPaddingCells, displayGridWidth, displayGridHeight]);
 
   function updateHoveredState(event: ReactPointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -871,27 +911,27 @@ export function CanvasStage({
         tabIndex={stageMode === "edit" ? 0 : undefined}
         className={clsx(
           "relative flex h-full w-full min-h-0 min-w-0 max-w-full flex-1 touch-none",
-          embeddedInPanel
-            ? stageMode === "pindou"
-              ? "rounded-none border-0 p-1.5 sm:p-2"
-            : "rounded-none border-0 p-2 sm:p-3"
-          : "rounded-[10px] border p-2 sm:p-3",
-        embeddedInPanel ? "mt-0" : focusOnly ? "mt-0" : "mt-4",
-        "overflow-hidden",
-        showBrushCursor || showFillCursor || showPickCursor ? "cursor-none" : "",
-        cropToolActive && !spacePanActive ? "cursor-crosshair" : "",
-        zoomToolActive && !spacePanActive ? "cursor-zoom-in" : "",
-        canPanStage && (stageMode === "pindou" || effectivePanActive)
-          ? isPanning
-            ? "cursor-grabbing select-none"
-            : stageMode === "pindou"
-              ? "cursor-default"
-              : "cursor-grab"
-          : "",
-        theme.previewStage,
-        embeddedInPanel ? "" : isDark ? "border-white/14" : "border-stone-300",
-        viewportClassName,
-      )}
+          getCanvasStageViewportShellClassName({
+            embeddedInPanel,
+            stageMode,
+            focusOnly,
+          }),
+          embeddedInPanel ? "mt-0" : focusOnly ? "mt-0" : "mt-4",
+          "overflow-hidden",
+          showBrushCursor || showFillCursor || showPickCursor ? "cursor-none" : "",
+          cropToolActive && !spacePanActive ? "cursor-crosshair" : "",
+          zoomToolActive && !spacePanActive ? "cursor-zoom-in" : "",
+          canPanStage && (stageMode === "pindou" || effectivePanActive)
+            ? isPanning
+              ? "cursor-grabbing select-none"
+              : stageMode === "pindou"
+                ? "cursor-default"
+                : "cursor-grab"
+            : "",
+          theme.previewStage,
+          embeddedInPanel ? "" : isDark ? "border-white/14" : "border-stone-300",
+          viewportClassName,
+        )}
       onFocus={() => {
         if (stageMode === "edit") {
           onStageEngage?.();
@@ -1161,84 +1201,95 @@ export function CanvasStage({
       ) : null}
       <div className="flex min-h-full min-w-full items-center justify-center">
         <div
-          ref={stageSurfaceRef}
-          className="relative w-fit shrink-0"
+          className="relative shrink-0"
           style={{
-            width: `${totalStageWidth}px`,
-            height: `${totalStageHeight}px`,
+            width: `${stageLayoutSize.width}px`,
+            height: `${stageLayoutSize.height}px`,
             transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
           }}
         >
-          <canvas ref={stageCanvasRef} className="block" />
-          {canvasCropDisplayRect ? (
-            <div className="pointer-events-none absolute inset-0 z-30">
-              <div
-                className="absolute"
-                style={{
-                  left: `${leftGutter}px`,
-                  top: `${topGutter}px`,
-                  width: `${scaledStageWidth}px`,
-                  height: `${canvasCropDisplayRect.y - topGutter}px`,
-                  backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
-                }}
-              />
-              <div
-                className="absolute"
-                style={{
-                  left: `${leftGutter}px`,
-                  top: `${canvasCropDisplayRect.y}px`,
-                  width: `${canvasCropDisplayRect.x - leftGutter}px`,
-                  height: `${canvasCropDisplayRect.height}px`,
-                  backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
-                }}
-              />
-              <div
-                className="absolute"
-                style={{
-                  left: `${canvasCropDisplayRect.x + canvasCropDisplayRect.width}px`,
-                  top: `${canvasCropDisplayRect.y}px`,
-                  width: `${leftGutter + scaledStageWidth - canvasCropDisplayRect.x - canvasCropDisplayRect.width}px`,
-                  height: `${canvasCropDisplayRect.height}px`,
-                  backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
-                }}
-              />
-              <div
-                className="absolute"
-                style={{
-                  left: `${leftGutter}px`,
-                  top: `${canvasCropDisplayRect.y + canvasCropDisplayRect.height}px`,
-                  width: `${scaledStageWidth}px`,
-                  height: `${topGutter + scaledStageHeight - canvasCropDisplayRect.y - canvasCropDisplayRect.height}px`,
-                  backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
-                }}
-              />
-              <div
-                className="absolute rounded-[6px] border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.16)]"
-                style={{
-                  left: `${canvasCropDisplayRect.x}px`,
-                  top: `${canvasCropDisplayRect.y}px`,
-                  width: `${canvasCropDisplayRect.width}px`,
-                  height: `${canvasCropDisplayRect.height}px`,
-                  borderColor: isDark ? "rgba(255,215,120,0.96)" : "rgba(133,77,14,0.96)",
-                  boxShadow: isDark
-                    ? "inset 0 0 0 1px rgba(255,255,255,0.18)"
-                    : "inset 0 0 0 1px rgba(255,255,255,0.42)",
-                }}
-              />
-              <div
-                className={clsx(
-                  "absolute rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm backdrop-blur-sm sm:text-xs",
-                  isDark ? "bg-stone-950/88 text-amber-100" : "bg-white/92 text-stone-800",
-                )}
-                style={{
-                  left: `${canvasCropDisplayRect.x + 8}px`,
-                  top: `${Math.max(topGutter + 8, canvasCropDisplayRect.y + 8)}px`,
-                }}
-              >
-                {canvasCropSelection?.width ?? 0} x {canvasCropSelection?.height ?? 0}
+          <div
+            ref={stageSurfaceRef}
+            className="absolute origin-top-left"
+            style={{
+              left: `${stageSurfaceOffset.x}px`,
+              top: `${stageSurfaceOffset.y}px`,
+              width: `${totalRenderWidth}px`,
+              height: `${totalRenderHeight}px`,
+              transform: zoomFactor === 1 ? undefined : `scale(${zoomFactor})`,
+            }}
+          >
+            <canvas ref={stageCanvasRef} className="block" />
+            {canvasCropDisplayRect ? (
+              <div className="pointer-events-none absolute inset-0 z-30">
+                <div
+                  className="absolute"
+                  style={{
+                    left: `${leftGutter}px`,
+                    top: `${topGutter}px`,
+                    width: `${renderStageWidth}px`,
+                    height: `${canvasCropDisplayRect.y - topGutter}px`,
+                    backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
+                  }}
+                />
+                <div
+                  className="absolute"
+                  style={{
+                    left: `${leftGutter}px`,
+                    top: `${canvasCropDisplayRect.y}px`,
+                    width: `${canvasCropDisplayRect.x - leftGutter}px`,
+                    height: `${canvasCropDisplayRect.height}px`,
+                    backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
+                  }}
+                />
+                <div
+                  className="absolute"
+                  style={{
+                    left: `${canvasCropDisplayRect.x + canvasCropDisplayRect.width}px`,
+                    top: `${canvasCropDisplayRect.y}px`,
+                    width: `${leftGutter + renderStageWidth - canvasCropDisplayRect.x - canvasCropDisplayRect.width}px`,
+                    height: `${canvasCropDisplayRect.height}px`,
+                    backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
+                  }}
+                />
+                <div
+                  className="absolute"
+                  style={{
+                    left: `${leftGutter}px`,
+                    top: `${canvasCropDisplayRect.y + canvasCropDisplayRect.height}px`,
+                    width: `${renderStageWidth}px`,
+                    height: `${topGutter + renderStageHeight - canvasCropDisplayRect.y - canvasCropDisplayRect.height}px`,
+                    backgroundColor: isDark ? "rgba(17,17,17,0.48)" : "rgba(17,17,17,0.16)",
+                  }}
+                />
+                <div
+                  className="absolute rounded-[6px] border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.16)]"
+                  style={{
+                    left: `${canvasCropDisplayRect.x}px`,
+                    top: `${canvasCropDisplayRect.y}px`,
+                    width: `${canvasCropDisplayRect.width}px`,
+                    height: `${canvasCropDisplayRect.height}px`,
+                    borderColor: isDark ? "rgba(255,215,120,0.96)" : "rgba(133,77,14,0.96)",
+                    boxShadow: isDark
+                      ? "inset 0 0 0 1px rgba(255,255,255,0.18)"
+                      : "inset 0 0 0 1px rgba(255,255,255,0.42)",
+                  }}
+                />
+                <div
+                  className={clsx(
+                    "absolute rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm backdrop-blur-sm sm:text-xs",
+                    isDark ? "bg-stone-950/88 text-amber-100" : "bg-white/92 text-stone-800",
+                  )}
+                  style={{
+                    left: `${canvasCropDisplayRect.x + 8}px`,
+                    top: `${Math.max(topGutter + 8, canvasCropDisplayRect.y + 8)}px`,
+                  }}
+                >
+                  {canvasCropSelection?.width ?? 0} x {canvasCropSelection?.height ?? 0}
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
@@ -1326,6 +1377,164 @@ export function formatCanvasStatusBadge(
     coordinateText: `${hoveredX}, ${hoveredY}`,
     sizeText: `${gridWidth} x ${gridHeight}`,
   };
+}
+
+export function getCanvasStageZoomMetrics({
+  stageMode,
+  stageScale,
+  editZoom,
+  pindouZoom,
+  stageWidth,
+  stageHeight,
+  cellSize,
+  gridGap,
+  axisGutter,
+}: {
+  stageMode: EditorPanelMode;
+  stageScale: number;
+  editZoom: number;
+  pindouZoom: number;
+  stageWidth: number;
+  stageHeight: number;
+  cellSize: number;
+  gridGap: number;
+  axisGutter: number;
+}) {
+  const zoomFactor = stageMode === "pindou" ? pindouZoom : editZoom;
+  const renderScale = stageScale;
+  const displayScale = renderScale * zoomFactor;
+  const renderCellSize = cellSize * renderScale;
+  const displayCellSize = cellSize * displayScale;
+  const renderGap = gridGap * renderScale;
+  const displayGap = gridGap * displayScale;
+  const renderStagePitch = renderCellSize + renderGap;
+  const displayStagePitch = displayCellSize + displayGap;
+  const renderStageWidth = stageWidth * renderScale;
+  const renderStageHeight = stageHeight * renderScale;
+  const displayStageWidth = stageWidth * displayScale;
+  const displayStageHeight = stageHeight * displayScale;
+  const renderAxisGutter = stageMode === "pindou" ? axisGutter : 0;
+  const displayAxisGutter = renderAxisGutter * zoomFactor;
+
+  return {
+    zoomFactor,
+    renderScale,
+    displayScale,
+    renderCellSize,
+    displayCellSize,
+    renderGap,
+    displayGap,
+    renderStagePitch,
+    displayStagePitch,
+    renderStageWidth,
+    renderStageHeight,
+    displayStageWidth,
+    displayStageHeight,
+    renderAxisGutter,
+    displayAxisGutter,
+    totalRenderWidth: renderStageWidth + renderAxisGutter,
+    totalRenderHeight: renderStageHeight + renderAxisGutter,
+    totalDisplayWidth: displayStageWidth + displayAxisGutter,
+    totalDisplayHeight: displayStageHeight + displayAxisGutter,
+  };
+}
+
+export function getCanvasStageFitScale({
+  stageMode,
+  stageWidth,
+  stageHeight,
+  availableWidth,
+  availableHeight,
+}: {
+  stageMode: EditorPanelMode;
+  stageWidth: number;
+  stageHeight: number;
+  availableWidth: number;
+  availableHeight: number;
+}) {
+  const scale = calculateStageScale(stageWidth, stageHeight, availableWidth, availableHeight);
+
+  if (stageMode !== "pindou") {
+    return scale;
+  }
+
+  function fits(candidateScale: number) {
+    const candidateAxisGutter = Math.max(22, Math.round(26 * candidateScale));
+    return (
+      stageWidth * candidateScale + candidateAxisGutter <= availableWidth &&
+      stageHeight * candidateScale + candidateAxisGutter <= availableHeight
+    );
+  }
+
+  let low = 0.1;
+  let high = scale;
+
+  if (fits(high)) {
+    return high;
+  }
+
+  for (let index = 0; index < 24; index += 1) {
+    const mid = (low + high) / 2;
+    if (fits(mid)) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  return Math.max(0.1, Number(Math.max(0.1, low - 0.0005).toFixed(4)));
+}
+
+export function getCanvasStageLayoutSize({
+  totalRenderWidth,
+  totalRenderHeight,
+}: {
+  totalRenderWidth: number;
+  totalRenderHeight: number;
+}) {
+  return {
+    width: totalRenderWidth,
+    height: totalRenderHeight,
+  };
+}
+
+export function getCanvasStageSurfaceOffset({
+  totalRenderWidth,
+  totalRenderHeight,
+  totalDisplayWidth,
+  totalDisplayHeight,
+}: {
+  totalRenderWidth: number;
+  totalRenderHeight: number;
+  totalDisplayWidth: number;
+  totalDisplayHeight: number;
+}) {
+  return {
+    x: (totalRenderWidth - totalDisplayWidth) / 2,
+    y: (totalRenderHeight - totalDisplayHeight) / 2,
+  };
+}
+
+export function getCanvasStageViewportShellClassName({
+  embeddedInPanel,
+  stageMode,
+  focusOnly,
+}: {
+  embeddedInPanel: boolean;
+  stageMode: "edit" | "pindou";
+  focusOnly: boolean;
+}) {
+  if (embeddedInPanel) {
+    return stageMode === "pindou"
+      ? "rounded-none border-0 p-1.5 sm:p-2"
+      : "rounded-none border-0 p-2 sm:p-3";
+  }
+
+  if (stageMode === "pindou" && focusOnly) {
+    return "rounded-none border p-2 sm:p-3";
+  }
+
+  return "rounded-[10px] border p-2 sm:p-3";
 }
 
 function resolveStageCellIndexFromClientPoint(
@@ -1417,14 +1626,13 @@ function drawCanvasGuideLines(
   scaledGap: number,
 ) {
   context.save();
-  const majorLineWidth = 1.3;
-  const minorLineWidth = 1.1;
+  const { majorLineWidth, minorLineWidth, minorDash } = getCanvasGuideLineMetrics(stagePitch);
   for (let index = 5; index < gridWidth; index += 5) {
     context.beginPath();
     const isMajorLine = index % 10 === 0;
     context.lineWidth = isMajorLine ? majorLineWidth : minorLineWidth;
     context.strokeStyle = isMajorLine ? "#000000" : "rgba(0, 0, 0, 0.5)";
-    context.setLineDash(isMajorLine ? [] : [4, 6]);
+    context.setLineDash(isMajorLine ? [] : minorDash);
     const x = boardX + index * stagePitch - scaledGap / 2;
     context.moveTo(x, boardY);
     context.lineTo(x, boardY + boardHeight);
@@ -1435,13 +1643,28 @@ function drawCanvasGuideLines(
     const isMajorLine = index % 10 === 0;
     context.lineWidth = isMajorLine ? majorLineWidth : minorLineWidth;
     context.strokeStyle = isMajorLine ? "#000000" : "rgba(0, 0, 0, 0.5)";
-    context.setLineDash(isMajorLine ? [] : [4, 6]);
+    context.setLineDash(isMajorLine ? [] : minorDash);
     const y = boardY + index * stagePitch - scaledGap / 2;
     context.moveTo(boardX, y);
     context.lineTo(boardX + boardWidth, y);
     context.stroke();
   }
   context.restore();
+}
+
+export function getCanvasGuideLineMetrics(stagePitch: number) {
+  const majorLineWidth = Math.max(0.55, Math.min(1.2, stagePitch * 0.08));
+  const minorLineWidth = Math.max(0.4, Math.min(0.9, stagePitch * 0.06));
+  const minorDash = [
+    Math.max(1.5, Math.min(4, stagePitch * 0.32)),
+    Math.max(2, Math.min(6, stagePitch * 0.48)),
+  ] as const;
+
+  return {
+    majorLineWidth,
+    minorLineWidth,
+    minorDash,
+  };
 }
 
 function drawCanvasAxisLabels(
