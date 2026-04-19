@@ -75,6 +75,8 @@ const croppedRasterCache = new WeakMap<RasterImage, Map<string, RasterImage>>();
 const autoDetectionCache = new WeakMap<RasterImage, Promise<WasmAutoDetection | null>>();
 const logicalGridCache = new WeakMap<RasterImage, Map<string, Promise<RasterImage>>>();
 const convertedGridCache = new WeakMap<RasterImage, Map<string, Promise<ConvertedImageGridResult>>>();
+const sourceEdgeGuideBaseCache = new WeakMap<RasterImage, Map<string, Promise<SourceEdgeGuideBase>>>();
+const sourceEdgeLogicalCache = new WeakMap<RasterImage, Map<string, Promise<RasterImage>>>();
 
 interface PaletteColor {
   label: string;
@@ -89,12 +91,23 @@ interface SourceGuidedEdgeData {
   gradientActivation: Float32Array;
 }
 
+interface SourceEdgeGuideBase {
+  fftEnhanced: RasterImage;
+  deltaActivation: Float32Array;
+  gradientActivation: Float32Array;
+}
+
 interface ConvertedImageGridResult {
   logical: RasterImage;
   protectedMask: Uint8Array | null;
   mergeProtectedMask: Uint8Array | null;
   edgeGuide: SourceGuidedEdgeData | null;
 }
+
+type ConvertGridProfileStage = {
+  name: string;
+  ms: number;
+};
 
 export interface ColorSystemOption {
   id: string;
@@ -705,17 +718,73 @@ function getCachedConvertedGrid(
   return converted;
 }
 
+function getCachedSourceEdgeGuideBase(
+  source: RasterImage,
+  key: string,
+  build: () => SourceEdgeGuideBase | Promise<SourceEdgeGuideBase>,
+) {
+  let cache = sourceEdgeGuideBaseCache.get(source);
+  if (!cache) {
+    cache = new Map<string, Promise<SourceEdgeGuideBase>>();
+    sourceEdgeGuideBaseCache.set(source, cache);
+  }
+
+  const existing = cache.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const result = Promise.resolve(build()).catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
+  cache.set(key, result);
+  return result;
+}
+
+function getCachedSourceEdgeLogical(
+  source: RasterImage,
+  key: string,
+  build: () => RasterImage | Promise<RasterImage>,
+) {
+  let cache = sourceEdgeLogicalCache.get(source);
+  if (!cache) {
+    cache = new Map<string, Promise<RasterImage>>();
+    sourceEdgeLogicalCache.set(source, cache);
+  }
+
+  const existing = cache.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const result = Promise.resolve(build()).catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
+  cache.set(key, result);
+  return result;
+}
+
 export async function processImageFile(
   file: File,
   options: ProcessOptions,
 ): Promise<ProcessResult> {
   const startedAt = getTimingNow();
+  const stageProfile = createProcessStageProfiler(file.name);
   const processMessages = {
     ...defaultProcessMessages,
     ...options.messages,
   };
   const embeddedResult = await getCachedEmbeddedChartResult(file);
+  stageProfile.mark("embedded-chart");
   if (embeddedResult) {
+    stageProfile.flush({
+      mode: embeddedResult.detectionMode,
+      gridWidth: embeddedResult.gridWidth,
+      gridHeight: embeddedResult.gridHeight,
+      totalMs: Math.max(0, getTimingNow() - startedAt),
+    });
     return embeddedResult;
   }
 
@@ -735,6 +804,7 @@ export async function processImageFile(
   );
   const loadedSource = await getCachedFileRaster(file, processMessages.canvasContextUnavailable);
   const source = getCachedCropRaster(loadedSource, options.cropRect);
+  stageProfile.mark("load-raster");
   const requestedEdgeEnhanceStrength = Number(options.fftEdgeEnhanceStrength ?? 0);
   const rawEdgeEnhanceStrength = Math.max(-100, Math.min(100, requestedEdgeEnhanceStrength));
   const effectiveEdgeEnhanceStrength = projectEdgeEnhanceStrength(rawEdgeEnhanceStrength);
@@ -753,6 +823,7 @@ export async function processImageFile(
 
   if (options.gridMode === "auto") {
     const wasmDetection = await getCachedAutoDetection(source);
+    stageProfile.mark("auto-detect");
     if (!wasmDetection) {
       throw new Error(processMessages.nonPixelArtError);
     }
@@ -770,6 +841,7 @@ export async function processImageFile(
           legacyPixelArtBias,
         ),
       );
+      stageProfile.mark("build-logical-grid");
       logicalProtectedMask = null;
     } else {
       const detectedCrop = getCachedCropBoxRaster(source, wasmDetection.cropBox);
@@ -788,6 +860,7 @@ export async function processImageFile(
       logicalProtectedMask = converted.protectedMask;
       logicalMergeProtectedMask = converted.mergeProtectedMask;
       sourceEdgeGuide = converted.edgeGuide;
+      stageProfile.mark("build-logical-grid");
     }
     gridWidth = wasmDetection.gridWidth;
     gridHeight = wasmDetection.gridHeight;
@@ -823,6 +896,7 @@ export async function processImageFile(
     logicalMergeProtectedMask = converted.mergeProtectedMask;
     sourceEdgeGuide = converted.edgeGuide;
     detectionMode = "converted-from-image";
+    stageProfile.mark("build-logical-grid");
   }
 
   if (grayscaleMode) {
@@ -832,6 +906,7 @@ export async function processImageFile(
   if (contrast !== 0) {
     logical = applyContrast(logical, contrast);
   }
+  stageProfile.mark("tone-adjust");
 
   const effectiveReduceColors =
     grayscaleMode
@@ -860,14 +935,17 @@ export async function processImageFile(
     logical = reduced.image;
     reducedUniqueColors = reduced.reducedUniqueColors;
   }
+  stageProfile.mark("pre-palette-reduce");
 
   if (usesImagePixelPipeline && effectivePostSharpen) {
     logical = applySharpen(logical, options.preSharpenStrength);
   }
+  stageProfile.mark("pre-sharpen");
 
   let matched = matchPalette(logical, matchingPaletteDefinition, {
     ditherStrength: usesImagePixelPipeline ? imageStyleProfile.ditherStrength : legacyDitherStrength,
   });
+  stageProfile.mark("palette-match");
   if (positiveEdgeEnhanceStrength > 0 && usesImagePixelPipeline) {
     const fftEdgeEnhanceOverrideColor =
       options.fftEdgeEnhanceOverrideLabel
@@ -913,6 +991,7 @@ export async function processImageFile(
       ),
     };
   }
+  stageProfile.mark("edge-post");
   if (usesImagePixelPipeline) {
     const remappedStyleBias = Math.min(100, (renderStyleBias / 75) * 100);
     const styleDrivenTolerance =
@@ -937,11 +1016,13 @@ export async function processImageFile(
       };
     }
   }
+  stageProfile.mark("post-palette-reduce");
   const normalizedCells = collapseOpenBackgroundAreas(
     matched.cells,
     gridWidth,
     gridHeight,
   );
+  stageProfile.mark("normalize-cells");
   const colors = summarizeCells(normalizedCells, paletteDefinition);
   const totalBeads = colors.reduce((sum, color) => sum + color.count, 0);
   const canvas = await renderChart(
@@ -970,6 +1051,15 @@ export async function processImageFile(
     processMessages,
     false,
   );
+  stageProfile.mark("render-and-encode");
+
+  const totalMs = Math.max(0, getTimingNow() - startedAt);
+  stageProfile.flush({
+    mode: detectionMode,
+    gridWidth,
+    gridHeight,
+    totalMs,
+  });
 
   return {
     blob,
@@ -977,7 +1067,7 @@ export async function processImageFile(
     colorSystemId: paletteDefinition.id,
     chartTitle: undefined,
     detectionMode,
-    processingElapsedMs: Math.max(0, getTimingNow() - startedAt),
+    processingElapsedMs: totalMs,
     effectiveReduceColors,
     effectiveEdgeEnhanceStrength: appliedEdgeEnhanceStrength,
     preferredEditorMode,
@@ -990,6 +1080,56 @@ export async function processImageFile(
     paletteColorsUsed: colors.length,
     colors,
     cells: normalizedCells,
+  };
+}
+
+type ProcessProfileStage = {
+  name: string;
+  ms: number;
+};
+
+type ProcessProfileRecord = {
+  fileName: string;
+  mode?: string;
+  gridWidth?: number;
+  gridHeight?: number;
+  totalMs: number;
+  stages: ProcessProfileStage[];
+};
+
+function createProcessStageProfiler(fileName: string) {
+  let lastMark = getTimingNow();
+  const stages: ProcessProfileStage[] = [];
+
+  return {
+    mark(name: string) {
+      const now = getTimingNow();
+      stages.push({
+        name,
+        ms: Math.max(0, now - lastMark),
+      });
+      lastMark = now;
+    },
+    flush(summary: Omit<ProcessProfileRecord, "fileName" | "stages">) {
+      if (!import.meta.env.DEV || typeof window === "undefined") {
+        return;
+      }
+
+      const record: ProcessProfileRecord = {
+        fileName,
+        ...summary,
+        stages: [...stages],
+      };
+      const debugWindow = window as typeof window & {
+        __PINDOU_LAST_PROCESS_PROFILE__?: ProcessProfileRecord;
+        __PINDOU_PROCESS_PROFILES__?: ProcessProfileRecord[];
+      };
+      debugWindow.__PINDOU_LAST_PROCESS_PROFILE__ = record;
+      debugWindow.__PINDOU_PROCESS_PROFILES__ = [
+        ...(debugWindow.__PINDOU_PROCESS_PROFILES__ ?? []).slice(-19),
+        record,
+      ];
+    },
   };
 }
 
@@ -2227,29 +2367,62 @@ async function convertCroppedImageToLogicalGrid(
   renderStyleBias: number,
   includeEdgeGuide: boolean,
 ): Promise<ConvertedImageGridResult> {
+  const convertProfileStages: ConvertGridProfileStage[] = [];
+  let convertLastMark = getTimingNow();
+  const markConvertStage = (name: string) => {
+    const now = getTimingNow();
+    convertProfileStages.push({
+      name,
+      ms: Math.max(0, now - convertLastMark),
+    });
+    convertLastMark = now;
+  };
   const detailSignal = normalizeDetailSignal(
     await computeDetailSignalWithWasm(cropped, gridWidth, gridHeight),
     gridWidth,
     gridHeight,
   );
+  markConvertStage("detail-signal");
   const sampled = sampleConvertedImageGrid(cropped, gridWidth, gridHeight, renderStyleBias);
+  markConvertStage("sample-grid");
   let edgeGuide: SourceGuidedEdgeData | null = null;
   if (includeEdgeGuide) {
-    const fftEnhanced = (await enhanceEdgesWithFftWasm(cropped, 100)) as RasterImage;
+    const edgeGuideBase = await getCachedSourceEdgeGuideBase(
+      cropped,
+      `base:v1:${gridWidth}:${gridHeight}`,
+      async () => {
+        const fftEnhanced = (await enhanceEdgesWithFftWasm(cropped, 100)) as RasterImage;
+        return {
+          fftEnhanced,
+          deltaActivation: projectSourceEdgeActivation(cropped, fftEnhanced, gridWidth, gridHeight),
+          gradientActivation: projectSourceEdgeGradientActivation(cropped, fftEnhanced, gridWidth, gridHeight),
+        };
+      },
+    );
+    markConvertStage("edge-guide-base");
+    const edgeSampleBias = Math.min(75, renderStyleBias);
+    const edgeLogical = await getCachedSourceEdgeLogical(
+      cropped,
+      `logical:v1:${gridWidth}:${gridHeight}:${edgeSampleBias}`,
+      () =>
+        sampleConvertedImageGrid(
+          edgeGuideBase.fftEnhanced,
+          gridWidth,
+          gridHeight,
+          edgeSampleBias,
+        ).logical,
+    );
+    markConvertStage("sample-edge-grid");
     edgeGuide = {
-      edgeLogical: sampleConvertedImageGrid(
-        fftEnhanced,
-        gridWidth,
-        gridHeight,
-        Math.min(75, renderStyleBias),
-      ).logical,
-      deltaActivation: projectSourceEdgeActivation(cropped, fftEnhanced, gridWidth, gridHeight),
-      gradientActivation: projectSourceEdgeGradientActivation(cropped, fftEnhanced, gridWidth, gridHeight),
+      edgeLogical,
+      deltaActivation: edgeGuideBase.deltaActivation,
+      gradientActivation: edgeGuideBase.gradientActivation,
     };
   }
   const detailAdjustedLogical = detailSignal
     ? applyDetailSignalToLogicalRaster(sampled.logical, detailSignal)
     : sampled.logical;
+  markConvertStage("apply-detail");
   const styleArtifactMask = edgeGuide
     ? buildStrongArtifactProtectionMask(
         edgeGuide.deltaActivation,
@@ -2259,6 +2432,7 @@ async function convertCroppedImageToLogicalGrid(
         renderStyleBias,
       )
     : null;
+  markConvertStage("artifact-mask");
   const sourceProtectedMask = mergeBinaryMasks(detailSignal?.protectedMask ?? null, styleArtifactMask);
   const mergeProtectedMask = edgeGuide
     ? buildMergeArtifactProtectionMask(
@@ -2269,10 +2443,12 @@ async function convertCroppedImageToLogicalGrid(
         renderStyleBias,
       )
     : null;
+  markConvertStage("merge-mask");
   const protectedMask = buildLogicalProtectionMask(
     detailAdjustedLogical,
     sourceProtectedMask,
   );
+  markConvertStage("build-protection");
   const logical =
     sampled.profile.cleanupPasses > 0
       ? stylizeLogicalRaster(detailAdjustedLogical, {
@@ -2281,6 +2457,25 @@ async function convertCroppedImageToLogicalGrid(
           protectedMask,
         })
       : detailAdjustedLogical;
+  markConvertStage("stylize");
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    const debugWindow = window as typeof window & {
+      __PINDOU_LAST_CONVERT_PROFILE__?: {
+        gridWidth: number;
+        gridHeight: number;
+        renderStyleBias: number;
+        includeEdgeGuide: boolean;
+        stages: ConvertGridProfileStage[];
+      };
+    };
+    debugWindow.__PINDOU_LAST_CONVERT_PROFILE__ = {
+      gridWidth,
+      gridHeight,
+      renderStyleBias,
+      includeEdgeGuide,
+      stages: convertProfileStages,
+    };
+  }
   return {
     logical,
     protectedMask: buildLogicalProtectionMask(logical, sourceProtectedMask),

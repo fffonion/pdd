@@ -66,7 +66,12 @@ import {
   type ProcessResult,
 } from "./lib/chart-processor";
 import { getThemeClasses, type ThemeMode } from "./lib/theme";
-import { getWorkspaceStageBusy, getWorkspaceUiBusy } from "./lib/workspace-busy-state";
+import {
+  getWorkspaceStageBusy,
+  getWorkspaceUiBusy,
+  scheduleWorkspaceStageBusyProcessing,
+  shouldShowWorkspacePanelsSuspenseLoading,
+} from "./lib/workspace-busy-state";
 import type { EditorPanelMode } from "./components/pixel-editor-panel";
 
 type GridMode = "auto" | "manual";
@@ -244,6 +249,53 @@ async function exitBrowserFullscreen() {
 
 function stripFileExtension(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "");
+}
+
+function WorkspacePanelsSuspenseFallback({
+  isDark,
+  busy,
+  readyHint,
+  minHeightClassName = "min-h-[520px]",
+}: {
+  isDark: boolean;
+  busy: boolean;
+  readyHint: string;
+  minHeightClassName?: string;
+}) {
+  const theme = getThemeClasses(isDark);
+
+  return (
+    <section
+      className={clsx(
+        "w-full rounded-[14px] border p-4 backdrop-blur transition-colors sm:rounded-[16px] sm:p-5 xl:rounded-[18px]",
+        minHeightClassName,
+        theme.panel,
+      )}
+    >
+      <div
+        className={clsx(
+          "flex h-full min-h-[220px] items-center justify-center rounded-[10px] border border-dashed px-5 py-10 text-center text-sm transition-colors",
+          theme.emptyState,
+        )}
+      >
+        {busy ? (
+          <div className="flex w-full max-w-[320px] flex-col items-center px-4">
+            <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
+              <div
+                className={clsx(
+                  "absolute inset-y-0 w-1/3 rounded-full",
+                  isDark ? "bg-amber-200/90" : "bg-amber-700/85",
+                )}
+                style={{ animation: "pindou-indeterminate 1.2s ease-in-out infinite" }}
+              />
+            </div>
+          </div>
+        ) : (
+          readyHint
+        )}
+      </div>
+    </section>
+  );
 }
 
 function normalizeDownloadBaseName(input: string) {
@@ -2319,15 +2371,21 @@ export default function App() {
     runIdRef.current = runId;
     setEditorRefreshBusy(false);
 
-    const timeoutId = window.setTimeout(() => {
-      void (async () => {
+    const cancelScheduledProcessing = scheduleWorkspaceStageBusyProcessing(
+      () => {
+        if (runIdRef.current !== runId) {
+          return;
+        }
         setBusy(true);
-        setError(null);
-        await waitForNextPaint();
-        await waitForNextPaint();
+      },
+      () => {
+        void (async () => {
+          setError(null);
+          await waitForNextPaint();
+          await waitForNextPaint();
 
-        try {
-          const processed = await processImageFile(file, {
+          try {
+            const processed = await processImageFile(file, {
             colorSystemId: effectiveColorSystemId,
             grayscaleMode,
             gridMode,
@@ -2356,153 +2414,154 @@ export default function App() {
             },
           });
 
-          if (runIdRef.current !== runId) {
-            return;
-          }
-
-          if (
-            gridMode === "auto" &&
-            activeAspectRatio &&
-            hasLargeAspectRatioMismatch(
-              activeAspectRatio,
-              processed.gridWidth / processed.gridHeight,
-            )
-          ) {
-            applyDetectedManualFallback(processed);
-            setResult((previous) => {
-              if (previous?.url) {
-                URL.revokeObjectURL(previous.url);
-              }
-              return null;
-            });
-            disabledResultLabelsRef.current = [];
-            setDisabledResultLabels([]);
-            setCanvasCropSelection(null);
-            editorHistoryRef.current = [];
-            editorHistoryIndexRef.current = -1;
-            editorDraftRef.current = null;
-            setEditorHistory([]);
-            setEditorHistoryIndex(-1);
-            setEditorDraftCells(null);
-            setError(t.errorAutoGridAspectMismatch);
-            return;
-          }
-
-          if (
-            gridMode === "auto" &&
-            (processed.detectionMode === "detected-wasm-chart" ||
-              processed.detectionMode === "detected-wasm-pixel") &&
-            (processed.gridWidth < 20 || processed.gridHeight < 20)
-          ) {
-            applyPlainManualFallback();
-            setResult((previous) => {
-              if (previous?.url) {
-                URL.revokeObjectURL(previous.url);
-              }
-              return null;
-            });
-            disabledResultLabelsRef.current = [];
-            setDisabledResultLabels([]);
-            setCanvasCropSelection(null);
-            editorHistoryRef.current = [];
-            editorHistoryIndexRef.current = -1;
-            editorDraftRef.current = null;
-            setEditorHistory([]);
-            setEditorHistoryIndex(-1);
-            setEditorDraftCells(null);
-            setError(t.errorAutoGridTooSmall);
-            return;
-          }
-
-          const url = URL.createObjectURL(processed.blob);
-          const nextDisabledResultLabels = getDefaultDisabledResultLabels(
-            grayscaleMode,
-            getPaletteOptions(processed.colorSystemId, grayscaleMode),
-          );
-          disabledResultLabelsRef.current = nextDisabledResultLabels;
-          setDisabledResultLabels(nextDisabledResultLabels);
-          setCanvasCropSelection(null);
-          if (
-            !grayscaleMode &&
-            !reduceColorsTouched &&
-            reduceColors !== processed.effectiveReduceColors
-          ) {
-            setReduceColors(processed.effectiveReduceColors);
-          }
-          if (!grayscaleMode && processed.colorSystemId !== colorSystemId) {
-            applyColorSystemId(processed.colorSystemId);
-          }
-          setChartLockEditing(processed.editingLocked);
-          if (processed.editingLocked) {
-            setChartSaveMetadata(true);
-          }
-          setEditorPanelMode(processed.editingLocked ? "pindou" : processed.preferredEditorMode);
-          startTransition(() => {
-            setResult((previous) => {
-              if (previous?.url) {
-                URL.revokeObjectURL(previous.url);
-              }
-              return { ...processed, url };
-            });
-          });
-          resetEditorHistory(processed.cells, {
-            gridWidth: processed.gridWidth,
-            gridHeight: processed.gridHeight,
-          });
-
-          if (processed.colors[0]?.label) {
-            const processedPaletteOptions = getPaletteOptions(
-              processed.colorSystemId,
-              grayscaleMode,
-            );
-            setSelectedLabel((previous) =>
-              previous === EMPTY_SELECTION_LABEL || processedPaletteOptions.some((entry) => entry.label === previous)
-                ? previous
-                : processed.colors[0].label,
-            );
-          }
-        } catch (processingError) {
-          if (runIdRef.current !== runId) {
-            return;
-          }
-
-          if (
-            gridMode === "auto" &&
-            processingError instanceof Error &&
-            processingError.message === t.errorNonPixelArt
-          ) {
-            setGridMode("manual");
-            applyManualFallbackGrid();
-          }
-
-          setResult((previous) => {
-            if (previous?.url) {
-              URL.revokeObjectURL(previous.url);
+            if (runIdRef.current !== runId) {
+              return;
             }
-            return null;
-          });
-          disabledResultLabelsRef.current = [];
-          setDisabledResultLabels([]);
-          setCanvasCropSelection(null);
-          editorHistoryRef.current = [];
-          editorHistoryIndexRef.current = -1;
-          editorDraftRef.current = null;
-          setEditorHistory([]);
-          setEditorHistoryIndex(-1);
-          setEditorDraftCells(null);
-          setError(
-            processingError instanceof Error ? processingError.message : t.processingFailed,
-          );
-        } finally {
-          if (runIdRef.current === runId) {
-            setBusy(false);
+
+            if (
+              gridMode === "auto" &&
+              activeAspectRatio &&
+              hasLargeAspectRatioMismatch(
+                activeAspectRatio,
+                processed.gridWidth / processed.gridHeight,
+              )
+            ) {
+              applyDetectedManualFallback(processed);
+              setResult((previous) => {
+                if (previous?.url) {
+                  URL.revokeObjectURL(previous.url);
+                }
+                return null;
+              });
+              disabledResultLabelsRef.current = [];
+              setDisabledResultLabels([]);
+              setCanvasCropSelection(null);
+              editorHistoryRef.current = [];
+              editorHistoryIndexRef.current = -1;
+              editorDraftRef.current = null;
+              setEditorHistory([]);
+              setEditorHistoryIndex(-1);
+              setEditorDraftCells(null);
+              setError(t.errorAutoGridAspectMismatch);
+              return;
+            }
+
+            if (
+              gridMode === "auto" &&
+              (processed.detectionMode === "detected-wasm-chart" ||
+                processed.detectionMode === "detected-wasm-pixel") &&
+              (processed.gridWidth < 20 || processed.gridHeight < 20)
+            ) {
+              applyPlainManualFallback();
+              setResult((previous) => {
+                if (previous?.url) {
+                  URL.revokeObjectURL(previous.url);
+                }
+                return null;
+              });
+              disabledResultLabelsRef.current = [];
+              setDisabledResultLabels([]);
+              setCanvasCropSelection(null);
+              editorHistoryRef.current = [];
+              editorHistoryIndexRef.current = -1;
+              editorDraftRef.current = null;
+              setEditorHistory([]);
+              setEditorHistoryIndex(-1);
+              setEditorDraftCells(null);
+              setError(t.errorAutoGridTooSmall);
+              return;
+            }
+
+            const url = URL.createObjectURL(processed.blob);
+            const nextDisabledResultLabels = getDefaultDisabledResultLabels(
+              grayscaleMode,
+              getPaletteOptions(processed.colorSystemId, grayscaleMode),
+            );
+            disabledResultLabelsRef.current = nextDisabledResultLabels;
+            setDisabledResultLabels(nextDisabledResultLabels);
+            setCanvasCropSelection(null);
+            if (
+              !grayscaleMode &&
+              !reduceColorsTouched &&
+              reduceColors !== processed.effectiveReduceColors
+            ) {
+              setReduceColors(processed.effectiveReduceColors);
+            }
+            if (!grayscaleMode && processed.colorSystemId !== colorSystemId) {
+              applyColorSystemId(processed.colorSystemId);
+            }
+            setChartLockEditing(processed.editingLocked);
+            if (processed.editingLocked) {
+              setChartSaveMetadata(true);
+            }
+            setEditorPanelMode(processed.editingLocked ? "pindou" : processed.preferredEditorMode);
+            startTransition(() => {
+              setResult((previous) => {
+                if (previous?.url) {
+                  URL.revokeObjectURL(previous.url);
+                }
+                return { ...processed, url };
+              });
+            });
+            resetEditorHistory(processed.cells, {
+              gridWidth: processed.gridWidth,
+              gridHeight: processed.gridHeight,
+            });
+
+            if (processed.colors[0]?.label) {
+              const processedPaletteOptions = getPaletteOptions(
+                processed.colorSystemId,
+                grayscaleMode,
+              );
+              setSelectedLabel((previous) =>
+                previous === EMPTY_SELECTION_LABEL || processedPaletteOptions.some((entry) => entry.label === previous)
+                  ? previous
+                  : processed.colors[0].label,
+              );
+            }
+          } catch (processingError) {
+            if (runIdRef.current !== runId) {
+              return;
+            }
+
+            if (
+              gridMode === "auto" &&
+              processingError instanceof Error &&
+              processingError.message === t.errorNonPixelArt
+            ) {
+              setGridMode("manual");
+              applyManualFallbackGrid();
+            }
+
+            setResult((previous) => {
+              if (previous?.url) {
+                URL.revokeObjectURL(previous.url);
+              }
+              return null;
+            });
+            disabledResultLabelsRef.current = [];
+            setDisabledResultLabels([]);
+            setCanvasCropSelection(null);
+            editorHistoryRef.current = [];
+            editorHistoryIndexRef.current = -1;
+            editorDraftRef.current = null;
+            setEditorHistory([]);
+            setEditorHistoryIndex(-1);
+            setEditorDraftCells(null);
+            setError(
+              processingError instanceof Error ? processingError.message : t.processingFailed,
+            );
+          } finally {
+            if (runIdRef.current === runId) {
+              setBusy(false);
+            }
           }
-        }
-      })();
-    }, 180);
+        })();
+      },
+    );
 
     return () => {
-      window.clearTimeout(timeoutId);
+      cancelScheduledProcessing();
     };
   }, [
     file,
@@ -2530,7 +2589,16 @@ export default function App() {
     return (
       <main className={clsx("min-h-screen transition-colors", theme.page)}>
         <div className="min-h-screen w-full overflow-hidden p-0">
-          <Suspense fallback={<div className="min-h-screen w-full" />}>
+          <Suspense
+            fallback={
+              <WorkspacePanelsSuspenseFallback
+                isDark={isDark}
+                busy={shouldShowWorkspacePanelsSuspenseLoading(Boolean(file), workspaceBusy)}
+                readyHint={t.readyHint}
+                minHeightClassName="min-h-screen"
+              />
+            }
+          >
             <WorkspacePanels
             t={t}
             inputUrl={inputUrl}
@@ -2853,7 +2921,15 @@ export default function App() {
             onFileSelection={handleFileSelection}
           />
 
-          <Suspense fallback={<div className="min-h-[520px] w-full" />}>
+          <Suspense
+            fallback={
+              <WorkspacePanelsSuspenseFallback
+                isDark={isDark}
+                busy={shouldShowWorkspacePanelsSuspenseLoading(Boolean(file), workspaceBusy)}
+                readyHint={t.readyHint}
+              />
+            }
+          >
             <WorkspacePanels
             t={t}
             inputUrl={inputUrl}
