@@ -4,6 +4,7 @@ use crate::detector_common::{
 };
 use crate::detector_signal::*;
 use crate::fft::estimate_period_from_fft;
+use crate::grid_strength::estimate_axis_boundary_strength_in_rect;
 use crate::types::{Detection, LinePair, RectBox};
 
 pub(crate) fn detect_auto_inner(
@@ -44,18 +45,20 @@ fn detect_chart_with_luma(
     if let Some(detection) = detect_separator_board_inner(rgba, luma, width, height) {
         candidates.push(detection);
     }
-    if let Some(detection) = detect_content_coverage_board_inner(rgba, luma, width, height)
-        && (has_meaningful_content_outside_detection(rgba, width, height, detection)
-            || has_significant_outer_margin(width, height, detection))
-    {
-        candidates.push(detection);
-    }
-    if let Some(detection) = detect_dense_edge_board_inner(luma, width, height)
-        && (has_meaningful_content_outside_detection(rgba, width, height, detection)
-            || has_significant_outer_margin(width, height, detection))
-    {
-        candidates.push(detection);
-    }
+    push_contextual_chart_candidate(
+        &mut candidates,
+        rgba,
+        width,
+        height,
+        detect_content_coverage_board_inner(rgba, luma, width, height),
+    );
+    push_contextual_chart_candidate(
+        &mut candidates,
+        rgba,
+        width,
+        height,
+        detect_dense_edge_board_inner(luma, width, height),
+    );
     if let Some(detection) = detect_pixel_art_with_luma(rgba, luma, width, height) {
         let trimmed = trim_chart_outer_bands(
             rgba,
@@ -89,6 +92,21 @@ fn detect_chart_with_luma(
         }),
         |detection| score_chart_detection(width, height, detection),
     )
+}
+
+fn push_contextual_chart_candidate(
+    candidates: &mut Vec<Detection>,
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    detection: Option<Detection>,
+) {
+    if let Some(detection) = detection
+        && (has_meaningful_content_outside_detection(rgba, width, height, detection)
+            || has_significant_outer_margin(width, height, detection))
+    {
+        candidates.push(detection);
+    }
 }
 
 fn detect_pixel_art_with_luma(
@@ -1428,70 +1446,20 @@ fn estimate_rect_boundary_strength(
     } else {
         detection.grid_height
     };
-    let mut boundary_total = 0.0_f32;
-    let mut boundary_count = 0_usize;
-    let mut interior_total = 0.0_f32;
-    let mut interior_count = 0_usize;
-
-    for index in 1..steps {
-        let boundary = if vertical_lines {
-            detection.left as f32 + index as f32 * cell_size
-        } else {
-            detection.top as f32 + index as f32 * cell_size
-        };
-        let interior = if vertical_lines {
-            detection.left as f32 + (index as f32 - 0.5) * cell_size
-        } else {
-            detection.top as f32 + (index as f32 - 0.5) * cell_size
-        };
-
-        boundary_total += sample_axis_gradient_in_rect(luma, width, rect, boundary, vertical_lines);
-        interior_total += sample_axis_gradient_in_rect(luma, width, rect, interior, vertical_lines);
-        boundary_count += 1;
-        interior_count += 1;
-    }
-
-    let boundary_mean = boundary_total / boundary_count.max(1) as f32;
-    let interior_mean = interior_total / interior_count.max(1) as f32;
-    boundary_mean / interior_mean.max(0.001)
-}
-
-fn sample_axis_gradient_in_rect(
-    luma: &[f32],
-    width: usize,
-    rect: RectBox,
-    position: f32,
-    vertical_lines: bool,
-) -> f32 {
-    if vertical_lines {
-        let x = position.round() as usize;
-        if rect.right <= rect.left + 2 {
-            return 0.0;
-        }
-        let clamped_x = x.clamp(rect.left + 1, rect.right.saturating_sub(2));
-        let mut total = 0.0_f32;
-        let mut count = 0_usize;
-        for y in rect.top.saturating_add(1)..rect.bottom.saturating_sub(1) {
-            let row = y * width;
-            total += (luma[row + clamped_x + 1] - luma[row + clamped_x - 1]).abs();
-            count += 1;
-        }
-        return total / count.max(1) as f32;
-    }
-
-    let y = position.round() as usize;
-    if rect.bottom <= rect.top + 2 {
-        return 0.0;
-    }
-    let clamped_y = y.clamp(rect.top + 1, rect.bottom.saturating_sub(2));
-    let mut total = 0.0_f32;
-    let mut count = 0_usize;
-    let row = clamped_y * width;
-    for x in rect.left.saturating_add(1)..rect.right.saturating_sub(1) {
-        total += (luma[row + x + width] - luma[row + x - width]).abs();
-        count += 1;
-    }
-    total / count.max(1) as f32
+    let origin = if vertical_lines {
+        detection.left
+    } else {
+        detection.top
+    };
+    estimate_axis_boundary_strength_in_rect(
+        luma,
+        width,
+        rect,
+        origin,
+        cell_size,
+        steps,
+        vertical_lines,
+    )
 }
 
 fn expand_pixel_empty_grid_bands(

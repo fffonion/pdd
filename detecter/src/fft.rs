@@ -75,6 +75,46 @@ pub(crate) fn estimate_period_from_fft(signal: &[f32]) -> Option<usize> {
     }
 }
 
+pub(crate) fn dominant_frequency_ratio(signal: &[f32]) -> Option<f32> {
+    if signal.len() < 8 {
+        return None;
+    }
+
+    let mean = signal.iter().sum::<f32>() / signal.len().max(1) as f32;
+    let mut centered = Vec::<f32>::with_capacity(signal.len());
+    for value in signal {
+        centered.push(*value - mean);
+    }
+    if centered.iter().all(|value| value.abs() < 1e-3) {
+        return None;
+    }
+
+    let fft_len = signal.len().next_power_of_two().max(16);
+    let mut buffer = vec![Complex::default(); fft_len];
+    for (index, value) in centered.iter().enumerate() {
+        let hann = if signal.len() <= 1 {
+            1.0
+        } else {
+            let phase = index as f32 / (signal.len() - 1) as f32;
+            0.5 - 0.5 * (std::f32::consts::TAU * phase).cos()
+        };
+        buffer[index].re = *value * hann;
+    }
+    fft_in_place(&mut buffer, false);
+
+    let mut total_power = 0.0_f32;
+    let mut best_power = 0.0_f32;
+    for bin in 1..(fft_len / 2) {
+        let power = complex_power(buffer[bin]);
+        total_power += power;
+        if power > best_power {
+            best_power = power;
+        }
+    }
+
+    (total_power > 1e-6).then_some(best_power / total_power)
+}
+
 fn complex_power(value: Complex) -> f32 {
     value.re * value.re + value.im * value.im
 }

@@ -1,17 +1,10 @@
 use crate::fft::estimate_period_from_fft;
-use crate::types::{Detection, LinePair};
-
-pub(crate) fn build_luma(rgba: &[u8], width: usize, height: usize) -> Vec<f32> {
-    let mut output = vec![0.0; width * height];
-    for (index, value) in output.iter_mut().enumerate().take(width * height) {
-        let base = index * 4;
-        let r = rgba[base] as f32;
-        let g = rgba[base + 1] as f32;
-        let b = rgba[base + 2] as f32;
-        *value = 0.299 * r + 0.587 * g + 0.114 * b;
-    }
-    output
-}
+use crate::grid_strength::estimate_axis_boundary_strength_in_rect;
+pub(crate) use crate::signal_projection::{
+    build_column_edge_projection, build_crop_column_projection, build_crop_row_projection,
+    build_luma, build_row_edge_projection, normalize_projection, smooth_projection,
+};
+use crate::types::{Detection, LinePair, RectBox};
 
 pub(crate) fn detect_strong_guide_family(
     rgba: &[u8],
@@ -320,82 +313,31 @@ pub(crate) fn estimate_grid_boundary_strength(
     let cell_width = (detection.right - detection.left) as f32 / detection.grid_width.max(1) as f32;
     let cell_height =
         (detection.bottom - detection.top) as f32 / detection.grid_height.max(1) as f32;
-    let vertical = estimate_axis_boundary_strength(luma, width, detection, cell_width, true);
-    let horizontal = estimate_axis_boundary_strength(luma, width, detection, cell_height, false);
-    vertical.min(horizontal)
-}
-
-fn estimate_axis_boundary_strength(
-    luma: &[f32],
-    width: usize,
-    detection: Detection,
-    cell_size: f32,
-    vertical_lines: bool,
-) -> f32 {
-    let mut boundary_total = 0.0_f32;
-    let mut boundary_count = 0_usize;
-    let mut interior_total = 0.0_f32;
-    let mut interior_count = 0_usize;
-
-    let steps = if vertical_lines {
-        detection.grid_width
-    } else {
-        detection.grid_height
+    let rect = RectBox {
+        left: detection.left,
+        top: detection.top,
+        right: detection.right,
+        bottom: detection.bottom,
     };
-
-    for index in 1..steps {
-        let boundary = if vertical_lines {
-            detection.left as f32 + index as f32 * cell_size
-        } else {
-            detection.top as f32 + index as f32 * cell_size
-        };
-        let interior = if vertical_lines {
-            detection.left as f32 + (index as f32 - 0.5) * cell_size
-        } else {
-            detection.top as f32 + (index as f32 - 0.5) * cell_size
-        };
-
-        boundary_total += sample_axis_gradient(luma, width, detection, boundary, vertical_lines);
-        interior_total += sample_axis_gradient(luma, width, detection, interior, vertical_lines);
-        boundary_count += 1;
-        interior_count += 1;
-    }
-
-    let boundary_mean = boundary_total / boundary_count.max(1) as f32;
-    let interior_mean = interior_total / interior_count.max(1) as f32;
-    boundary_mean / interior_mean.max(1e-3)
-}
-
-fn sample_axis_gradient(
-    luma: &[f32],
-    width: usize,
-    detection: Detection,
-    position: f32,
-    vertical_lines: bool,
-) -> f32 {
-    if vertical_lines {
-        let x = position.round() as usize;
-        let clamped_x = x.clamp(detection.left + 1, detection.right.saturating_sub(2));
-        let mut total = 0.0_f32;
-        let mut count = 0_usize;
-        for y in detection.top.saturating_add(1)..detection.bottom.saturating_sub(1) {
-            let row = y * width;
-            total += (luma[row + clamped_x + 1] - luma[row + clamped_x - 1]).abs();
-            count += 1;
-        }
-        total / count.max(1) as f32
-    } else {
-        let y = position.round() as usize;
-        let clamped_y = y.clamp(detection.top + 1, detection.bottom.saturating_sub(2));
-        let row = clamped_y * width;
-        let mut total = 0.0_f32;
-        let mut count = 0_usize;
-        for x in detection.left.saturating_add(1)..detection.right.saturating_sub(1) {
-            total += (luma[row + x + width] - luma[row + x - width]).abs();
-            count += 1;
-        }
-        total / count.max(1) as f32
-    }
+    let vertical = estimate_axis_boundary_strength_in_rect(
+        luma,
+        width,
+        rect,
+        detection.left,
+        cell_width,
+        detection.grid_width,
+        true,
+    );
+    let horizontal = estimate_axis_boundary_strength_in_rect(
+        luma,
+        width,
+        rect,
+        detection.top,
+        cell_height,
+        detection.grid_height,
+        false,
+    );
+    vertical.min(horizontal)
 }
 
 fn sample_patch_rgb(
@@ -425,63 +367,6 @@ fn sample_patch_rgb(
 fn median_usize(values: &mut [usize]) -> usize {
     values.sort_unstable();
     values[values.len() / 2]
-}
-
-pub(crate) fn build_column_edge_projection(luma: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let mut projection = vec![0.0; width];
-    for y in 1..height.saturating_sub(1) {
-        let row = y * width;
-        for x in 1..width.saturating_sub(1) {
-            let gx = (luma[row + x + 1] - luma[row + x - 1]).abs();
-            let gy = (luma[row + x + width] - luma[row + x - width]).abs();
-            projection[x] += gx + gy * 0.15;
-        }
-    }
-    projection
-}
-
-pub(crate) fn build_row_edge_projection(luma: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let mut projection = vec![0.0; height];
-    for (y, value) in projection
-        .iter_mut()
-        .enumerate()
-        .take(height.saturating_sub(1))
-        .skip(1)
-    {
-        let row = y * width;
-        for x in 1..width.saturating_sub(1) {
-            let gx = (luma[row + x + 1] - luma[row + x - 1]).abs();
-            let gy = (luma[row + x + width] - luma[row + x - width]).abs();
-            *value += gy + gx * 0.15;
-        }
-    }
-    projection
-}
-
-pub(crate) fn smooth_projection(values: &mut [f32], radius: usize) {
-    if values.len() < 3 || radius == 0 {
-        return;
-    }
-
-    let source = values.to_vec();
-    for index in 0..values.len() {
-        let start = index.saturating_sub(radius);
-        let end = (index + radius + 1).min(values.len());
-        let mut sum = 0.0;
-        for value in &source[start..end] {
-            sum += *value;
-        }
-        values[index] = sum / (end - start) as f32;
-    }
-}
-
-pub(crate) fn normalize_projection(values: &mut [f32], divisor: f32) {
-    if divisor <= 0.0 {
-        return;
-    }
-    for value in values {
-        *value /= divisor;
-    }
 }
 
 fn projection_mean(values: &[f32]) -> f32 {
@@ -1093,54 +978,4 @@ pub(crate) fn dominant_period_for_crop(
     } else {
         Some(best_period)
     }
-}
-
-pub(crate) fn build_crop_column_projection(
-    luma: &[f32],
-    width: usize,
-    left: usize,
-    right: usize,
-    top: usize,
-    bottom: usize,
-) -> Vec<f32> {
-    let safe_left = left.saturating_add(1);
-    let safe_right = right.saturating_sub(1);
-    let safe_top = top.saturating_add(1);
-    let safe_bottom = bottom.saturating_sub(1);
-    let mut projection = vec![0.0; safe_right.saturating_sub(safe_left).max(1)];
-
-    for y in safe_top..safe_bottom {
-        let row = y * width;
-        for x in safe_left..safe_right {
-            projection[x - safe_left] += (luma[row + x + 1] - luma[row + x - 1]).abs();
-        }
-    }
-
-    smooth_projection(&mut projection, 3);
-    projection
-}
-
-pub(crate) fn build_crop_row_projection(
-    luma: &[f32],
-    width: usize,
-    left: usize,
-    right: usize,
-    top: usize,
-    bottom: usize,
-) -> Vec<f32> {
-    let safe_left = left.saturating_add(1);
-    let safe_right = right.saturating_sub(1);
-    let safe_top = top.saturating_add(1);
-    let safe_bottom = bottom.saturating_sub(1);
-    let mut projection = vec![0.0; safe_bottom.saturating_sub(safe_top).max(1)];
-
-    for y in safe_top..safe_bottom {
-        let row = y * width;
-        for x in safe_left..safe_right {
-            projection[y - safe_top] += (luma[row + x + width] - luma[row + x - width]).abs();
-        }
-    }
-
-    smooth_projection(&mut projection, 3);
-    projection
 }

@@ -1,17 +1,23 @@
+mod detail_signal;
 mod detector;
 mod detector_common;
 mod detector_signal;
 mod edge_enhance;
 mod fft;
+mod grid_strength;
+mod signal_projection;
 mod types;
+mod wasm_input;
+mod wasm_result;
 
-use std::slice;
-
+use detail_signal::compute_detail_signal;
 use detector::{detect_auto_inner, detect_chart_inner, detect_pixel_art_inner};
 use edge_enhance::enhance_edges_fft_in_place;
-use types::Detection;
-
-static mut RESULT: [i32; 16] = [0; 16];
+use wasm_input::{read_rgba_input, read_rgba_input_mut};
+use wasm_result::{
+    clear_detail_result, detail_buffer_len, detail_buffer_ptr, result_buffer_ptr,
+    store_detail_result, write_auto_result, write_single_result,
+};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: usize) -> *mut u8 {
@@ -35,7 +41,17 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, capacity: usize) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn result_ptr() -> *const i32 {
-    (&raw const RESULT).cast::<i32>()
+    result_buffer_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn detail_result_ptr() -> *const i32 {
+    detail_buffer_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn detail_result_len() -> usize {
+    detail_buffer_len()
 }
 
 #[unsafe(no_mangle)]
@@ -61,7 +77,7 @@ pub extern "C" fn detect_chart(ptr: *const u8, len: usize, width: u32, height: u
     };
     let detection = detect_chart_inner(rgba, width, height);
     write_single_result(detection);
-    unsafe { RESULT[0] as u32 }
+    u32::from(detection.is_some())
 }
 
 #[unsafe(no_mangle)]
@@ -72,7 +88,7 @@ pub extern "C" fn detect_pixel_art(ptr: *const u8, len: usize, width: u32, heigh
     };
     let detection = detect_pixel_art_inner(rgba, width, height);
     write_single_result(detection);
-    unsafe { RESULT[0] as u32 }
+    u32::from(detection.is_some())
 }
 
 #[unsafe(no_mangle)]
@@ -97,75 +113,29 @@ pub extern "C" fn enhance_edges(
     ))
 }
 
-fn read_rgba_input<'a>(
+#[unsafe(no_mangle)]
+pub extern "C" fn detail_signal(
     ptr: *const u8,
     len: usize,
     width: u32,
     height: u32,
-    min_side: usize,
-) -> Option<(&'a [u8], usize, usize)> {
-    let width = width as usize;
-    let height = height as usize;
-    let expected_len = width.saturating_mul(height).saturating_mul(4);
-    if ptr.is_null() || len < expected_len || width < min_side || height < min_side {
-        return None;
+    grid_width: u32,
+    grid_height: u32,
+) -> u32 {
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+    if grid_width == 0 || grid_height == 0 {
+        clear_detail_result();
+        return 0;
     }
 
-    let rgba = unsafe { slice::from_raw_parts(ptr, expected_len) };
-    Some((rgba, width, height))
-}
+    let Some((rgba, width, height)) = read_rgba_input(ptr, len, width, height, 1) else {
+        clear_detail_result();
+        return 0;
+    };
 
-fn read_rgba_input_mut<'a>(
-    ptr: *mut u8,
-    len: usize,
-    width: u32,
-    height: u32,
-    min_side: usize,
-) -> Option<(&'a mut [u8], usize, usize)> {
-    let width = width as usize;
-    let height = height as usize;
-    let expected_len = width.saturating_mul(height).saturating_mul(4);
-    if ptr.is_null() || len < expected_len || width < min_side || height < min_side {
-        return None;
-    }
-
-    let rgba = unsafe { slice::from_raw_parts_mut(ptr, expected_len) };
-    Some((rgba, width, height))
-}
-
-fn write_single_result(result: Option<Detection>) {
-    unsafe {
-        RESULT = [0; 16];
-        write_result_at(0, result);
-    }
-}
-
-fn write_auto_result(chart: Option<Detection>, pixel: Option<Detection>) {
-    unsafe {
-        RESULT = [0; 16];
-        write_result_at(0, chart);
-        write_result_at(8, pixel);
-    }
-}
-
-fn write_result_at(offset: usize, result: Option<Detection>) {
-    unsafe {
-        if let Some(detection) = result {
-            let encoded = encode_detection(detection);
-            RESULT[offset..offset + encoded.len()].copy_from_slice(&encoded);
-        }
-    }
-}
-
-fn encode_detection(detection: Detection) -> [i32; 8] {
-    [
-        1,
-        detection.left as i32,
-        detection.top as i32,
-        detection.right as i32,
-        detection.bottom as i32,
-        detection.grid_width as i32,
-        detection.grid_height as i32,
-        (detection.confidence * 1000.0).round() as i32,
-    ]
+    let result = compute_detail_signal(rgba, width, height, grid_width, grid_height);
+    let has_result = !result.is_empty();
+    store_detail_result(result);
+    u32::from(has_result)
 }
