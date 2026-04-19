@@ -705,8 +705,12 @@ export function CanvasStage({
     const width = Math.max(1, Math.round(totalRenderWidth));
     const height = Math.max(1, Math.round(totalRenderHeight));
     const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(width * dpr));
-    canvas.height = Math.max(1, Math.round(height * dpr));
+    const bitmapRenderScale = getCanvasStageBitmapRenderScale({
+      stageMode,
+      zoomFactor,
+    });
+    canvas.width = Math.max(1, Math.round(width * dpr * bitmapRenderScale));
+    canvas.height = Math.max(1, Math.round(height * dpr * bitmapRenderScale));
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
 
@@ -715,7 +719,7 @@ export function CanvasStage({
       return;
     }
 
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.setTransform(dpr * bitmapRenderScale, 0, 0, dpr * bitmapRenderScale, 0, 0);
     context.clearRect(0, 0, width, height);
     context.imageSmoothingEnabled = false;
 
@@ -875,12 +879,13 @@ export function CanvasStage({
         displayGridWidth,
         displayGridHeight,
         stageScale,
+        zoomFactor,
         axisGutter,
         renderStageWidth,
         renderStageHeight,
       );
     }
-  }, [cells, gridWidth, gridHeight, totalRenderWidth, totalRenderHeight, leftGutter, topGutter, renderStageWidth, renderStageHeight, renderCellSize, renderGap, renderStagePitch, stageScale, stageMode, focusedLabel, isDark, overlayEnabled, overlayImage, overlayCropRect, flipHorizontal, axisGutter, showPindouLabels, pindouBeadShape, pindouBoardTheme, pindouPaddingCells, displayGridWidth, displayGridHeight]);
+  }, [cells, gridWidth, gridHeight, totalRenderWidth, totalRenderHeight, leftGutter, topGutter, renderStageWidth, renderStageHeight, renderCellSize, renderGap, renderStagePitch, stageScale, stageMode, zoomFactor, focusedLabel, isDark, overlayEnabled, overlayImage, overlayCropRect, flipHorizontal, axisGutter, showPindouLabels, pindouBeadShape, pindouBoardTheme, pindouPaddingCells, displayGridWidth, displayGridHeight]);
 
   function updateHoveredState(event: ReactPointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -1439,6 +1444,16 @@ export function getCanvasStageZoomMetrics({
   };
 }
 
+export function getCanvasStageBitmapRenderScale({
+  stageMode,
+  zoomFactor,
+}: {
+  stageMode: EditorPanelMode;
+  zoomFactor: number;
+}) {
+  return stageMode === "pindou" ? Math.max(1, zoomFactor) : 1;
+}
+
 export function getCanvasStageFitScale({
   stageMode,
   stageWidth,
@@ -1526,15 +1541,15 @@ export function getCanvasStageViewportShellClassName({
 }) {
   if (embeddedInPanel) {
     return stageMode === "pindou"
-      ? "rounded-none border-0 p-1.5 sm:p-2"
-      : "rounded-none border-0 p-2 sm:p-3";
+      ? "box-border rounded-none border-0 p-1.5 sm:p-2"
+      : "box-border rounded-none border-0 p-2 sm:p-3";
   }
 
   if (stageMode === "pindou" && focusOnly) {
-    return "rounded-none border p-2 sm:p-3";
+    return "box-border rounded-none border p-2 sm:p-3";
   }
 
-  return "rounded-[10px] border p-2 sm:p-3";
+  return "box-border rounded-[10px] border p-2 sm:p-3";
 }
 
 function resolveStageCellIndexFromClientPoint(
@@ -1674,13 +1689,18 @@ function drawCanvasAxisLabels(
   gridWidth: number,
   gridHeight: number,
   stageScale: number,
+  zoomFactor: number,
   gutter: number,
   boardWidth: number,
   boardHeight: number,
 ) {
   const labelsX = buildAxisLabelPositions(gridWidth);
   const labelsY = buildAxisLabelPositions(gridHeight);
-  const fontSize = Math.max(9, Math.min(12, 10 * stageScale + 1));
+  const { fontSize, labelOffset } = getCanvasAxisLabelMetrics({
+    stageScale,
+    zoomFactor,
+    gutter,
+  });
   context.save();
   context.font = `700 ${fontSize}px system-ui, sans-serif`;
   context.fillStyle = "rgba(17,17,17,0.78)";
@@ -1689,14 +1709,31 @@ function drawCanvasAxisLabels(
 
   for (const label of labelsX) {
     const position = ((label.index + 0.5) / gridWidth) * boardWidth;
-    context.fillText(String(label.value), boardX + position, boardY - gutter * 0.38);
+    context.fillText(String(label.value), boardX + position, boardY - labelOffset);
   }
 
   for (const label of labelsY) {
     const position = ((label.index + 0.5) / gridHeight) * boardHeight;
-    context.fillText(String(label.value), boardX - gutter * 0.38, boardY + position);
+    context.fillText(String(label.value), boardX - labelOffset, boardY + position);
   }
   context.restore();
+}
+
+export function getCanvasAxisLabelMetrics({
+  stageScale,
+  zoomFactor,
+  gutter,
+}: {
+  stageScale: number;
+  zoomFactor: number;
+  gutter: number;
+}) {
+  const safeZoomFactor = zoomFactor > 0 ? zoomFactor : 1;
+  const baseFontSize = Math.max(9, Math.min(12, 10 * stageScale + 1));
+  return {
+    fontSize: baseFontSize / safeZoomFactor,
+    labelOffset: (gutter * 0.38) / safeZoomFactor,
+  };
 }
 
 function drawPindouBoardPattern(

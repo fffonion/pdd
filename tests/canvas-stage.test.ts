@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
+  getCanvasAxisLabelMetrics,
   formatCanvasStatusBadge,
+  getCanvasStageBitmapRenderScale,
   getCanvasGuideLineMetrics,
   getCanvasStageFitScale,
   getCanvasStageLayoutSize,
@@ -135,6 +137,56 @@ test("fullscreen pindou canvas viewport should not keep rounded corners", () => 
       focusOnly: true,
     }),
   ).not.toContain("rounded-[10px]");
+});
+
+test("embedded canvas viewport shell should use box-border so panel padding does not push it outside the parent height", () => {
+  expect(
+    getCanvasStageViewportShellClassName({
+      embeddedInPanel: true,
+      stageMode: "edit",
+      focusOnly: false,
+    }),
+  ).toContain("box-border");
+  expect(
+    getCanvasStageViewportShellClassName({
+      embeddedInPanel: true,
+      stageMode: "pindou",
+      focusOnly: false,
+    }),
+  ).toContain("box-border");
+});
+
+test("pindou zoom should raise the backing bitmap scale instead of only stretching the canvas with CSS", () => {
+  expect(
+    getCanvasStageBitmapRenderScale({
+      stageMode: "pindou",
+      zoomFactor: 2.4,
+    }),
+  ).toBe(2.4);
+  expect(
+    getCanvasStageBitmapRenderScale({
+      stageMode: "edit",
+      zoomFactor: 1.8,
+    }),
+  ).toBe(1);
+});
+
+test("pindou axis labels should keep a stable on-screen size when zoom changes", () => {
+  const base = getCanvasAxisLabelMetrics({
+    stageScale: 1,
+    zoomFactor: 1,
+    gutter: 24,
+  });
+  expect(base.fontSize).toBe(11);
+  expect(base.labelOffset).toBeCloseTo(9.12, 6);
+
+  const zoomed = getCanvasAxisLabelMetrics({
+    stageScale: 1,
+    zoomFactor: 2,
+    gutter: 24,
+  });
+  expect(zoomed.fontSize).toBe(5.5);
+  expect(zoomed.labelOffset).toBeCloseTo(4.56, 6);
 });
 
 test("pindou guide lines should thin out when the stage is scaled down", () => {

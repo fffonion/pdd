@@ -477,6 +477,7 @@ export function PixelEditorPanel({
             cells={cells}
             gridWidth={gridWidth}
             gridHeight={gridHeight}
+            panelViewportHeight={panelViewportHeight}
             inputUrl={inputUrl}
             overlayCropRect={overlayCropRect}
             overlayEnabled={overlayEnabled}
@@ -614,6 +615,7 @@ export function EditModeWorkspace({
   cells,
   gridWidth,
   gridHeight,
+  panelViewportHeight = 0,
   inputUrl,
   overlayCropRect,
   overlayEnabled,
@@ -661,6 +663,7 @@ export function EditModeWorkspace({
   cells: EditableCell[];
   gridWidth: number;
   gridHeight: number;
+  panelViewportHeight?: number;
   inputUrl: string | null;
   overlayCropRect: NormalizedCropRect | null;
   overlayEnabled: boolean;
@@ -704,6 +707,7 @@ export function EditModeWorkspace({
   mobileApp?: boolean;
 }) {
   const theme = getThemeClasses(isDark);
+  const editSectionRef = useRef<HTMLElement | null>(null);
   const editStageSurfaceRef = useRef<HTMLDivElement | null>(null);
   const [isLandscapeViewport, setIsLandscapeViewport] = useState(() => {
     if (typeof window === "undefined") {
@@ -713,6 +717,7 @@ export function EditModeWorkspace({
     return window.innerWidth > window.innerHeight;
   });
   const [sideMountedEditToolRailHeight, setSideMountedEditToolRailHeight] = useState(0);
+  const [mobileVisiblePanelHeight, setMobileVisiblePanelHeight] = useState(0);
 
   useEffect(() => {
     if (!mobileApp) {
@@ -732,6 +737,35 @@ export function EditModeWorkspace({
     };
   }, [mobileApp]);
 
+  useEffect(() => {
+    if (!mobileApp) {
+      return;
+    }
+
+    function syncMobileVisiblePanelHeight() {
+      if (!editSectionRef.current) {
+        return;
+      }
+
+      const panelRect = editSectionRef.current.getBoundingClientRect();
+      const navTop = document.querySelector("nav")?.getBoundingClientRect().top ?? window.innerHeight - 68;
+      const nextHeight = getPindouVisiblePanelHeight({
+        panelTop: panelRect.top,
+        navTop,
+        viewportHeight: window.innerHeight,
+      });
+      setMobileVisiblePanelHeight((current) => (current === nextHeight ? current : nextHeight));
+    }
+
+    syncMobileVisiblePanelHeight();
+    window.addEventListener("resize", syncMobileVisiblePanelHeight);
+    window.addEventListener("orientationchange", syncMobileVisiblePanelHeight);
+    return () => {
+      window.removeEventListener("resize", syncMobileVisiblePanelHeight);
+      window.removeEventListener("orientationchange", syncMobileVisiblePanelHeight);
+    };
+  }, [mobileApp]);
+
   const mobileStageRegion = getMobileWorkspaceStageRegionMode({
     panel: "edit",
     mobileApp,
@@ -746,6 +780,10 @@ export function EditModeWorkspace({
     isLandscapeViewport,
     mergeEditToolRailIntoToolbar: mobileChrome.mergeEditToolRailIntoToolbar,
   });
+  const effectiveEditPanelViewportHeight = getEffectiveMobileEditPanelHeight({
+    panelViewportHeight,
+    mobileVisiblePanelHeight,
+  });
   const sideMountedEditToolRailLayout = getAdaptiveEditToolRailLayout({
     availableHeight: getMobileLandscapeEditToolRailAvailableHeight({
       measuredHeight: sideMountedEditToolRailHeight,
@@ -755,6 +793,12 @@ export function EditModeWorkspace({
     }),
     itemCount: 10,
   });
+  const mobileEditStageHeight =
+    mobileStageRegion.fixedViewport && !useSideMountedEditToolRail
+      ? getMobileEditStageHeight({
+          panelViewportHeight: effectiveEditPanelViewportHeight,
+        })
+      : 0;
 
   useEffect(() => {
     if (!useSideMountedEditToolRail) {
@@ -841,16 +885,12 @@ export function EditModeWorkspace({
   ];
   const editToolRail = (
     <section
-      className={clsx(
-        mobileChrome.mergeEditToolRailIntoToolbar
-          ? "px-2 pb-3 pt-2.5"
-          : useSideMountedEditToolRail
-            ? "min-h-0 min-w-0 border-r px-1.5 py-1.5 transition-colors"
-          : mobileApp
-            ? "min-h-0 min-w-0 border-b px-0 pb-2 pt-2 transition-colors lg:border-b-0 lg:border-r lg:p-1.5"
-            : "min-h-0 min-w-0 border-b p-2 transition-colors lg:border-b-0 lg:border-r lg:p-1.5",
-        mobileChrome.mergeEditToolRailIntoToolbar ? "" : isDark ? "border-white/10" : "border-stone-200",
-      )}
+      className={getEditToolRailSectionClassName({
+        mobileApp,
+        useSideMountedEditToolRail,
+        mergeEditToolRailIntoToolbar: mobileChrome.mergeEditToolRailIntoToolbar,
+        isDark,
+      })}
     >
       {useSideMountedEditToolRail ? (
         <div
@@ -993,21 +1033,23 @@ export function EditModeWorkspace({
             ? "grid"
             : "lg:grid lg:grid-cols-[60px_minmax(0,1fr)]",
       )}
-      style={
-        useSideMountedEditToolRail
-          ? { gridTemplateColumns: `${sideMountedEditToolRailLayout.railWidthPx}px minmax(0,1fr)` }
-          : undefined
-      }
+      style={getEditStageSurfaceInlineStyle({
+        useSideMountedEditToolRail,
+        railWidthPx: sideMountedEditToolRailLayout.railWidthPx,
+      })}
     >
       {!mobileChrome.mergeEditToolRailIntoToolbar ? editToolRail : null}
       <div
-        className={clsx(
-          "min-h-0 min-w-0 overflow-hidden",
-          mobileChrome.useSharedStageInset ? "px-2 pb-4 pt-3" : "",
-          mobileStageRegion.fixedViewport
-            ? "h-[min(58svh,32rem)] flex-none"
-            : "flex h-full flex-1",
-        )}
+        className={getEditStageViewportContainerClassName({
+          useSharedStageInset: mobileChrome.useSharedStageInset,
+          fixedViewport: mobileStageRegion.fixedViewport,
+          useSideMountedEditToolRail,
+        })}
+        style={
+          mobileStageRegion.fixedViewport && !useSideMountedEditToolRail && mobileEditStageHeight > 0
+            ? { height: `${mobileEditStageHeight}px` }
+            : undefined
+        }
       >
         <CanvasStage
           cells={cells}
@@ -1037,9 +1079,18 @@ export function EditModeWorkspace({
       </div>
     </div>
   );
+  const editSectionInlineStyle = getEditPanelSectionInlineStyle({
+    mobileApp,
+    useSideMountedEditToolRail,
+    panelViewportHeight: effectiveEditPanelViewportHeight,
+  });
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <section
+      ref={editSectionRef}
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      style={editSectionInlineStyle}
+    >
       {mobileChrome.useUnifiedStageShell ? (
         <div
           className={clsx(
@@ -2161,6 +2212,99 @@ export function getPindouPanelSectionInlineStyle({
   } as const;
 }
 
+export function getEditPanelSectionInlineStyle({
+  mobileApp,
+  useSideMountedEditToolRail,
+  panelViewportHeight,
+}: {
+  mobileApp: boolean;
+  useSideMountedEditToolRail: boolean;
+  panelViewportHeight: number;
+}) {
+  if (!mobileApp || !useSideMountedEditToolRail || panelViewportHeight <= 0) {
+    return undefined;
+  }
+
+  return {
+    height: `${panelViewportHeight}px`,
+    minHeight: `${panelViewportHeight}px`,
+  } as const;
+}
+
+export function getEditToolRailSectionClassName({
+  mobileApp,
+  useSideMountedEditToolRail,
+  mergeEditToolRailIntoToolbar,
+  isDark,
+}: {
+  mobileApp: boolean;
+  useSideMountedEditToolRail: boolean;
+  mergeEditToolRailIntoToolbar: boolean;
+  isDark: boolean;
+}) {
+  return clsx(
+    mergeEditToolRailIntoToolbar
+      ? "px-2 pb-3 pt-2.5"
+      : useSideMountedEditToolRail
+        ? "min-h-0 min-w-0 h-full overflow-hidden border-r px-1.5 py-1.5 transition-colors"
+        : mobileApp
+          ? "min-h-0 min-w-0 border-b px-0 pb-2 pt-2 transition-colors lg:border-b-0 lg:border-r lg:p-1.5"
+          : "min-h-0 min-w-0 border-b p-2 transition-colors lg:border-b-0 lg:border-r lg:p-1.5",
+    mergeEditToolRailIntoToolbar ? "" : isDark ? "border-white/10" : "border-stone-200",
+  );
+}
+
+export function getEditStageSurfaceInlineStyle({
+  useSideMountedEditToolRail,
+  railWidthPx,
+}: {
+  useSideMountedEditToolRail: boolean;
+  railWidthPx: number;
+}) {
+  if (!useSideMountedEditToolRail) {
+    return undefined;
+  }
+
+  return {
+    gridTemplateColumns: `${railWidthPx}px minmax(0,1fr)`,
+    gridTemplateRows: "minmax(0,1fr)",
+  } as const;
+}
+
+export function getEditStageViewportContainerClassName({
+  useSharedStageInset,
+  fixedViewport,
+  useSideMountedEditToolRail,
+}: {
+  useSharedStageInset: boolean;
+  fixedViewport: boolean;
+  useSideMountedEditToolRail: boolean;
+}) {
+  return clsx(
+    "min-h-0 min-w-0 overflow-hidden",
+    useSharedStageInset ? (useSideMountedEditToolRail ? "" : "px-2 pb-4 pt-3") : "",
+    fixedViewport && !useSideMountedEditToolRail
+      ? "h-[min(58svh,32rem)] flex-none"
+      : "flex h-full flex-1",
+  );
+}
+
+export function getEffectiveMobileEditPanelHeight({
+  panelViewportHeight,
+  mobileVisiblePanelHeight,
+}: {
+  panelViewportHeight: number;
+  mobileVisiblePanelHeight: number;
+}) {
+  const safePanelHeight = panelViewportHeight > 0 ? panelViewportHeight : 0;
+  const safeVisibleHeight = mobileVisiblePanelHeight > 0 ? mobileVisiblePanelHeight : 0;
+  if (safePanelHeight > 0 && safeVisibleHeight > 0) {
+    return Math.min(safePanelHeight, safeVisibleHeight);
+  }
+
+  return safeVisibleHeight > 0 ? safeVisibleHeight : safePanelHeight;
+}
+
 export function getPindouStageAreaClassName({
   focusOnly,
   reserveFocusToolbarSpace = false,
@@ -2259,6 +2403,20 @@ export function getMobilePindouStageHeight({
     sectionSpacingPx;
 
   return Math.max(220, panelViewportHeight - reservedHeight);
+}
+
+export function getMobileEditStageHeight({
+  panelViewportHeight,
+}: {
+  panelViewportHeight: number;
+}) {
+  if (panelViewportHeight <= 0) {
+    return 0;
+  }
+
+  const toolbarReservePx = 152;
+  const bottomBreathingRoomPx = 44;
+  return Math.max(260, panelViewportHeight - toolbarReservePx - bottomBreathingRoomPx);
 }
 
 export function getPindouColorRailItemCornerFlags({

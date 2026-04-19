@@ -3,7 +3,9 @@ import {
   getAdaptiveEditToolRailLayout,
   formatProcessingElapsedNote,
   getMobileLandscapeEditToolRailAvailableHeight,
+  getMobileEditStageHeight,
   getMobilePindouStageHeight,
+  getEffectiveMobileEditPanelHeight,
   getMobileWorkspaceChromeMode,
   getMobilePindouColorRailViewportBleedStyle,
   getPindouFocusButtonClassName,
@@ -17,12 +19,16 @@ import {
   getMobileWorkspaceStageRegionMode,
   getPindouColorRailMode,
   getPindouPanelSectionClassName,
+  getEditPanelSectionInlineStyle,
   getPindouStageAreaClassName,
   getPindouVisiblePanelHeight,
   getPindouColorRailDummySlotClassName,
   getPindouLandscapeRailContentMode,
   getPindouLandscapeSwatchGridClassName,
   getPindouPanelSectionInlineStyle,
+  getEditToolRailSectionClassName,
+  getEditStageSurfaceInlineStyle,
+  getEditStageViewportContainerClassName,
   shouldRenderStandaloneEditToolRailRow,
   shouldUseSideMountedEditToolRail,
 } from "../src/components/pixel-editor-panel";
@@ -85,6 +91,19 @@ test("mobile pindou stage height should reserve two color rows and the hint labe
       includeHint: true,
     }),
   ).toBe(220);
+});
+
+test("mobile edit stage height should reserve toolbar and bottom breathing room like pindou instead of using a fixed svh box", () => {
+  expect(
+    getMobileEditStageHeight({
+      panelViewportHeight: 664,
+    }),
+  ).toBe(468);
+  expect(
+    getMobileEditStageHeight({
+      panelViewportHeight: 320,
+    }),
+  ).toBe(260);
 });
 
 test("mobile non-focus pindou layout should keep the panel and stage area constrained to the visible region", () => {
@@ -161,6 +180,113 @@ test("mobile non-focus landscape pindou should pin the panel height to the visib
       panelViewportHeight: 246,
     }),
   ).toBeUndefined();
+});
+
+test("mobile non-focus landscape edit should pin the panel height to the visible workspace region", () => {
+  expect(
+    getEditPanelSectionInlineStyle({
+      mobileApp: true,
+      useSideMountedEditToolRail: true,
+      panelViewportHeight: 258,
+    }),
+  ).toEqual({
+    height: "258px",
+    minHeight: "258px",
+  });
+  expect(
+    getEditPanelSectionInlineStyle({
+      mobileApp: true,
+      useSideMountedEditToolRail: false,
+      panelViewportHeight: 258,
+    }),
+  ).toBeUndefined();
+});
+
+test("mobile landscape edit side rail section should be clipped to the stage height instead of growing past the bottom nav", () => {
+  expect(
+    getEditToolRailSectionClassName({
+      mobileApp: true,
+      useSideMountedEditToolRail: true,
+      mergeEditToolRailIntoToolbar: false,
+      isDark: false,
+    }),
+  ).toContain("h-full");
+  expect(
+    getEditToolRailSectionClassName({
+      mobileApp: true,
+      useSideMountedEditToolRail: true,
+      mergeEditToolRailIntoToolbar: false,
+      isDark: false,
+    }),
+  ).toContain("overflow-hidden");
+});
+
+test("mobile landscape edit stage surface should clamp its single grid row to the visible height", () => {
+  expect(
+    getEditStageSurfaceInlineStyle({
+      useSideMountedEditToolRail: true,
+      railWidthPx: 190,
+    }),
+  ).toEqual({
+    gridTemplateColumns: "190px minmax(0,1fr)",
+    gridTemplateRows: "minmax(0,1fr)",
+  });
+});
+
+test("mobile landscape edit should not keep the fixed portrait viewport box when the tool rail moves to the side", () => {
+  expect(
+    getEditStageViewportContainerClassName({
+      useSharedStageInset: true,
+      fixedViewport: true,
+      useSideMountedEditToolRail: true,
+    }),
+  ).toContain("flex h-full flex-1");
+  expect(
+    getEditStageViewportContainerClassName({
+      useSharedStageInset: true,
+      fixedViewport: true,
+      useSideMountedEditToolRail: true,
+    }),
+  ).not.toContain("h-[min(58svh,32rem)]");
+});
+
+test("mobile landscape edit should not keep extra viewport padding around the canvas container", () => {
+  expect(
+    getEditStageViewportContainerClassName({
+      useSharedStageInset: true,
+      fixedViewport: true,
+      useSideMountedEditToolRail: true,
+    }),
+  ).not.toContain("px-2");
+  expect(
+    getEditStageViewportContainerClassName({
+      useSharedStageInset: true,
+      fixedViewport: true,
+      useSideMountedEditToolRail: true,
+    }),
+  ).not.toContain("pb-4");
+  expect(
+    getEditStageViewportContainerClassName({
+      useSharedStageInset: true,
+      fixedViewport: true,
+      useSideMountedEditToolRail: true,
+    }),
+  ).not.toContain("pt-3");
+});
+
+test("mobile edit should clamp its panel height to the actually visible region above the fixed nav", () => {
+  expect(
+    getEffectiveMobileEditPanelHeight({
+      panelViewportHeight: 293,
+      mobileVisiblePanelHeight: 258,
+    }),
+  ).toBe(258);
+  expect(
+    getEffectiveMobileEditPanelHeight({
+      panelViewportHeight: 0,
+      mobileVisiblePanelHeight: 258,
+    }),
+  ).toBe(258);
 });
 
 test("mobile landscape fullscreen pindou should reserve space for the top focus toolbar", () => {
