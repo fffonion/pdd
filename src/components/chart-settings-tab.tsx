@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SwitchRow } from "./controls";
 import {
   PindouBoardThemeButtons,
 } from "./pixel-editor-chrome";
 import type { Messages } from "../lib/i18n";
+import { getMobileCardSpacingTokens } from "../lib/mobile-card-spacing";
 import type { PindouBoardTheme } from "../lib/pindou-board-theme";
 import { getThemeClasses } from "../lib/theme";
 
@@ -17,6 +18,55 @@ function formatChartCodeSize(byteLength: number) {
   const roundedKilobytes =
     kilobytes >= 10 ? Math.round(kilobytes) : Math.round(kilobytes * 10) / 10;
   return `${roundedKilobytes} KB`;
+}
+
+function MobileSettingsGroup({
+  isDark,
+  tone = "subtle",
+  children,
+}: {
+  isDark: boolean;
+  tone?: "subtle" | "plain";
+  children: ReactNode;
+}) {
+  return (
+    <div
+      data-mobile-group-tone={tone}
+      className={clsx(
+        "overflow-hidden rounded-[14px] border",
+        tone === "plain"
+          ? isDark
+            ? "border-white/12 bg-white/[0.06]"
+            : "border-stone-300 bg-white"
+          : isDark
+            ? "border-white/12 bg-white/[0.035]"
+            : "border-stone-300 bg-[#f6efe2]",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MobileSettingsItem({
+  isDark,
+  divider = true,
+  children,
+}: {
+  isDark: boolean;
+  divider?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={clsx(
+        getMobileCardSpacingTokens().rowPadding,
+        divider && (isDark ? "border-b border-white/10" : "border-b border-stone-200"),
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function ChartSettingsTab({
@@ -60,6 +110,7 @@ export function ChartSettingsTab({
   onExportChartShareQr,
   onSaveChart,
   saveBusy,
+  variant = "desktop",
 }: {
   t: Messages;
   isDark: boolean;
@@ -101,28 +152,45 @@ export function ChartSettingsTab({
   onExportChartShareQr: () => void | Promise<void>;
   onSaveChart: () => void | Promise<void>;
   saveBusy: boolean;
+  variant?: "desktop" | "mobile-app";
 }) {
   const theme = getThemeClasses(isDark);
+  const mobileApp = variant === "mobile-app";
+  const mobileCardSpacing = getMobileCardSpacingTokens();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const settingsColumnRef = useRef<HTMLDivElement | null>(null);
   const [rightSidebarHeight, setRightSidebarHeight] = useState<number | null>(null);
   const chartSectionClassName = clsx(
-    "rounded-md border p-3",
+    mobileApp ? "rounded-[14px] border p-3" : "rounded-md border p-3",
     isDark ? "border-white/12 bg-white/[0.035]" : "border-stone-300 bg-white/78",
   );
   const chartPanelClassName = clsx(
-    "flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0 xl:overflow-hidden",
-    isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-white/78",
+    mobileApp
+      ? "flex min-h-[220px] flex-col gap-2.5 rounded-[14px] border p-3 xl:min-h-0 xl:overflow-hidden"
+      : "flex min-h-[200px] flex-col gap-2 rounded-md border p-3 xl:min-h-0 xl:overflow-hidden",
+    isDark ? "border-white/12 bg-white/[0.03]" : "border-stone-300 bg-[#f6efe2]",
   );
   const chartPreviewClassName = clsx(
-    "relative flex min-h-[260px] items-center justify-center overflow-hidden rounded-md sm:min-h-[320px] xl:min-h-0 xl:flex-1",
-    isDark ? "bg-white/[0.03]" : "bg-white/78",
+    mobileApp
+      ? "relative flex aspect-[3/4] w-full flex-none items-center justify-center overflow-hidden rounded-[16px]"
+      : "relative flex min-h-[260px] items-center justify-center overflow-hidden rounded-md sm:min-h-[320px] xl:min-h-0 xl:flex-1",
+    mobileApp
+      ? isDark
+        ? "bg-[#16120f]"
+        : "bg-[#faf4e9]"
+      : isDark
+        ? "bg-white/[0.03]"
+        : "bg-white/78",
   );
   const chartCodeFieldClassName = clsx(
     "rounded-md border px-3 py-2 shadow-inner transition",
-    isDark
-      ? "border-white/10 bg-[#110d0b] text-stone-200"
-      : "border-stone-300 bg-[#f6efe2] text-stone-800",
+    mobileApp
+      ? isDark
+        ? "border-white/10 bg-[#16120f] text-stone-200"
+        : "border-stone-300 bg-[#faf4e9] text-stone-800"
+      : isDark
+        ? "border-white/10 bg-[#110d0b] text-stone-200"
+        : "border-stone-300 bg-[#f6efe2] text-stone-800",
   );
   const chartShareCodeBytes =
     chartShareCode && typeof TextEncoder !== "undefined"
@@ -172,9 +240,325 @@ export function ChartSettingsTab({
     };
   }, []);
 
+  if (mobileApp) {
+    return (
+      <section className="flex w-full flex-col overflow-visible">
+        <input
+          ref={fileInputRef}
+          accept="image/*"
+          className="hidden"
+          type="file"
+          onChange={(event) => void onChartWatermarkImageFile(event.target.files?.[0] ?? null)}
+        />
+        <div className="flex flex-col gap-2 px-2 py-1">
+          <MobileSettingsGroup isDark={isDark} tone="subtle">
+            <MobileSettingsItem isDark={isDark}>
+              <div className={clsx("flex flex-col", mobileCardSpacing.stackedGap)}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className={clsx("text-sm font-semibold", theme.cardTitle)}>
+                    {t.chartSettingsPreview}
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      className={clsx(
+                        "h-11 rounded-[10px] border px-3 text-sm font-semibold transition",
+                        chartShareCode && !chartShareQrBusy ? theme.pill : theme.disabledButton,
+                      )}
+                      disabled={!chartShareCode || chartShareQrBusy}
+                      onClick={() => void onExportChartShareQr()}
+                      type="button"
+                    >
+                      {t.chartSettingsExportQrCode}
+                    </button>
+                    <button
+                      className={clsx(
+                        "h-11 rounded-[10px] border px-3 text-sm font-semibold transition",
+                        !saveBusy && !chartPreviewBusy ? theme.primaryButton : theme.disabledButton,
+                      )}
+                      disabled={saveBusy || chartPreviewBusy}
+                      onClick={() => void onSaveChart()}
+                      type="button"
+                    >
+                      {t.downloadPng}
+                    </button>
+                  </div>
+                </div>
+                <div data-mobile-export-surface="preview" className={chartPreviewClassName}>
+                  {chartPreviewUrl ? (
+                    <img
+                      alt={t.chartSettingsPreview}
+                      className={clsx(
+                        "h-full max-h-full w-full max-w-full object-contain",
+                        mobileApp ? "object-center" : "object-left",
+                      )}
+                      src={chartPreviewUrl}
+                    />
+                  ) : chartPreviewError ? (
+                    <div className="flex max-w-[280px] flex-col items-center gap-2 px-5 text-center">
+                      <p className={clsx("text-sm font-semibold", isDark ? "text-rose-200" : "text-rose-700")}>
+                        {t.chartSettingsPreviewError}
+                      </p>
+                      <p className={clsx("text-sm leading-6", theme.cardMuted)}>
+                        {chartPreviewError}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className={clsx("max-w-[260px] text-center text-sm", theme.cardMuted)}>
+                      {t.chartSettingsPreviewEmpty}
+                    </p>
+                  )}
+                  {chartPreviewBusy ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-white/58 backdrop-blur-[1px] dark:bg-black/36">
+                      <div className="flex w-full max-w-[220px] flex-col items-center px-4">
+                        <div className={clsx("relative h-2 w-full overflow-hidden rounded-full", isDark ? "bg-stone-800/80" : "bg-stone-300/80")}>
+                          <div
+                            className={clsx(
+                              "absolute inset-y-0 w-1/3 rounded-full",
+                              isDark ? "bg-amber-200/90" : "bg-amber-700/85",
+                            )}
+                            style={{ animation: "pindou-indeterminate 1.2s ease-in-out infinite" }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </MobileSettingsItem>
+
+            <MobileSettingsItem isDark={isDark} divider={false}>
+              <div className={clsx("flex flex-col", mobileCardSpacing.stackedGap)}>
+                <div className={clsx("flex flex-col items-start", mobileCardSpacing.stackedGap)}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={clsx("shrink-0 whitespace-nowrap text-sm font-semibold", theme.cardTitle)}>
+                      {t.chartSettingsChartCode}
+                    </span>
+                    <span className={clsx("shrink-0 text-xs", theme.cardMuted)}>
+                      {t.chartSettingsChartCodeSize} {chartShareCodeSizeText}
+                    </span>
+                  </div>
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    <button
+                      className={clsx(
+                        "h-11 flex-1 rounded-[10px] border px-3 text-sm font-semibold transition-all duration-200",
+                        chartShareCode
+                          ? chartShareLinkCopied
+                            ? clsx(theme.primaryButton, "scale-[1.03] shadow-[0_6px_18px_rgba(120,72,18,0.14)]")
+                            : theme.pill
+                          : theme.disabledButton,
+                      )}
+                      disabled={!chartShareCode}
+                      onClick={() => void onCopyChartShareLink()}
+                      type="button"
+                    >
+                      {chartShareLinkCopied ? t.chartSettingsCopyChartLinkCopied : t.chartSettingsCopyChartLink}
+                    </button>
+                    <button
+                      className={clsx(
+                        "h-11 flex-1 rounded-[10px] border px-3 text-sm font-semibold transition-all duration-200",
+                        chartShareCode
+                          ? chartShareCodeCopied
+                            ? clsx(theme.primaryButton, "scale-[1.03] shadow-[0_6px_18px_rgba(120,72,18,0.14)]")
+                            : theme.primaryButton
+                          : theme.disabledButton,
+                      )}
+                      disabled={!chartShareCode}
+                      onClick={() => void onCopyChartShareCode()}
+                      type="button"
+                    >
+                      {chartShareCodeCopied ? t.chartSettingsCopyChartCodeCopied : t.chartSettingsCopyChartCode}
+                    </button>
+                  </div>
+                </div>
+                <div
+                  data-mobile-export-surface="chart-code"
+                  className={clsx("h-[88px] overflow-auto text-xs leading-5", chartCodeFieldClassName)}
+                >
+                  <div className="break-all whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {chartShareCode || t.chartSettingsChartCodePlaceholder}
+                  </div>
+                </div>
+              </div>
+            </MobileSettingsItem>
+          </MobileSettingsGroup>
+
+          <MobileSettingsGroup isDark={isDark} tone="plain">
+            <MobileSettingsItem isDark={isDark}>
+              <label className={clsx("flex flex-col", mobileCardSpacing.stackedGap)}>
+                <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsChartTitle}</span>
+                <input
+                  className={clsx("h-10 rounded-md border px-3 text-sm outline-none transition", theme.input)}
+                  placeholder={t.chartSettingsChartTitlePlaceholder}
+                  type="text"
+                  value={chartExportTitle}
+                  onChange={(event) => onChartExportTitleChange(event.target.value)}
+                />
+              </label>
+            </MobileSettingsItem>
+
+            <MobileSettingsItem isDark={isDark}>
+              <label className={clsx("flex flex-col", mobileCardSpacing.stackedGap)}>
+                <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsWatermarkText}</span>
+                <input
+                  className={clsx("h-10 rounded-md border px-3 text-sm outline-none transition", theme.input)}
+                  placeholder={t.appTitle}
+                  type="text"
+                  value={chartWatermarkText}
+                  onChange={(event) => onChartWatermarkTextChange(event.target.value)}
+                />
+              </label>
+            </MobileSettingsItem>
+
+            <MobileSettingsItem isDark={isDark} divider={false}>
+              <div className={clsx("flex flex-col", mobileCardSpacing.stackedGap)}>
+                <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsWatermarkImage}</span>
+                <div className={clsx("flex flex-wrap items-center gap-2 rounded-[10px] p-2.5", theme.subtlePanel)}>
+                  {chartWatermarkImageDataUrl ? (
+                    <img
+                      alt={chartWatermarkImageName || t.chartSettingsWatermarkImage}
+                      className="h-14 w-14 rounded-md border object-cover"
+                      src={chartWatermarkImageDataUrl}
+                    />
+                  ) : (
+                    <div className={clsx("flex h-14 w-14 items-center justify-center rounded-md border text-xs", theme.cardMuted)}>
+                      PNG
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className={clsx("truncate text-sm font-semibold", theme.cardTitle)}>
+                      {chartWatermarkImageName || t.chartSettingsNoWatermarkImage}
+                    </p>
+                  </div>
+                  <button
+                    className={clsx("h-10 rounded-md border px-3 text-sm font-semibold transition", theme.pill)}
+                    onClick={() => fileInputRef.current?.click()}
+                    type="button"
+                  >
+                    {t.chartSettingsChooseWatermarkImage}
+                  </button>
+                  {chartWatermarkImageDataUrl ? (
+                    <button
+                      className={clsx("h-10 rounded-md border px-3 text-sm font-semibold transition", theme.pill)}
+                      onClick={onChartWatermarkImageClear}
+                      type="button"
+                    >
+                      {t.chartSettingsClearWatermarkImage}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </MobileSettingsItem>
+          </MobileSettingsGroup>
+
+          <MobileSettingsGroup isDark={isDark} tone="plain">
+            <MobileSettingsItem isDark={isDark}>
+              <SwitchRow
+                id="chart-include-guides"
+                title={t.chartSettingsIncludeGuides}
+                description={t.chartSettingsIncludeGuidesDescription}
+                checked={chartIncludeGuides}
+                onCheckedChange={onChartIncludeGuidesChange}
+                isDark={isDark}
+              />
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark}>
+              <SwitchRow
+                id="chart-show-color-labels"
+                title={t.chartSettingsShowColorLabels}
+                description={t.chartSettingsShowColorLabelsDescription}
+                checked={chartShowColorLabels}
+                onCheckedChange={onChartShowColorLabelsChange}
+                isDark={isDark}
+              />
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark}>
+              <SwitchRow
+                id="chart-gapless-cells"
+                title={t.chartSettingsGaplessCells}
+                description={t.chartSettingsGaplessCellsDescription}
+                checked={chartGaplessCells}
+                onCheckedChange={onChartGaplessCellsChange}
+                isDark={isDark}
+              />
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark}>
+              <div className="flex flex-col gap-3">
+                <SwitchRow
+                  id="chart-include-board-pattern"
+                  title={t.chartSettingsIncludeBoardPattern}
+                  checked={chartIncludeBoardPattern}
+                  onCheckedChange={onChartIncludeBoardPatternChange}
+                  isDark={isDark}
+                />
+                <div className={clsx("flex items-center gap-2", chartIncludeBoardPattern ? "" : "pointer-events-none opacity-45")}>
+                  <PindouBoardThemeButtons
+                    isDark={isDark}
+                    selectedTheme={chartBoardTheme}
+                    labels={boardThemeLabels}
+                    groupLabel={t.pindouBoardThemeLabel ?? "搴曠汗"}
+                    onChange={onChartBoardThemeChange}
+                  />
+                </div>
+              </div>
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark}>
+              <SwitchRow
+                id="chart-include-legend"
+                title={t.chartSettingsIncludeLegend}
+                description={t.chartSettingsIncludeLegendDescription}
+                checked={chartIncludeLegend}
+                onCheckedChange={onChartIncludeLegendChange}
+                isDark={isDark}
+              />
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark}>
+              <SwitchRow
+                id="chart-include-qr-code"
+                title={t.chartSettingsIncludeQrCode}
+                description={t.chartSettingsIncludeQrCodeDescription}
+                checked={chartIncludeQrCode}
+                onCheckedChange={onChartIncludeQrCodeChange}
+                isDark={isDark}
+              />
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark}>
+              <SwitchRow
+                id="chart-lock-editing"
+                title={t.chartSettingsLockEditing}
+                description={t.chartSettingsLockEditingDescription}
+                checked={chartLockEditing}
+                onCheckedChange={onChartLockEditingChange}
+                isDark={isDark}
+              />
+            </MobileSettingsItem>
+            <MobileSettingsItem isDark={isDark} divider={false}>
+              <SwitchRow
+                id="chart-save-metadata"
+                title={t.chartSettingsSaveMetadata}
+                description={
+                  chartLockEditing
+                    ? t.chartSettingsSaveMetadataLockedDescription
+                    : t.chartSettingsSaveMetadataDescription
+                }
+                checked={chartSaveMetadata}
+                onCheckedChange={onChartSaveMetadataChange}
+                isDark={isDark}
+                disabled={chartLockEditing}
+              />
+            </MobileSettingsItem>
+          </MobileSettingsGroup>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="flex w-full flex-col overflow-visible">
-      <div className="grid grid-cols-1 gap-4 px-3 py-3 sm:gap-5 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)] xl:items-start">
+      <div className={clsx(
+        "grid grid-cols-1 gap-4",
+        "px-3 py-3 sm:gap-5 sm:px-5 sm:py-5",
+        "xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)] xl:items-start",
+      )}>
         <div ref={settingsColumnRef} className="flex flex-col gap-4 xl:self-start">
           <label className="flex flex-col gap-2">
             <span className={clsx("text-sm font-semibold", theme.cardTitle)}>{t.chartSettingsChartTitle}</span>
@@ -476,7 +860,7 @@ export function ChartSettingsTab({
                 chartCodeFieldClassName,
               )}
             >
-              <div className="break-all whitespace-normal">
+              <div className="break-all whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {chartShareCode || t.chartSettingsChartCodePlaceholder}
               </div>
             </div>

@@ -3,7 +3,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ChartSettingsTab } from "../src/components/chart-settings-tab";
 import { messages } from "../src/lib/i18n";
 
-function renderChartSettingsTab(chartPreviewError: string | null) {
+function renderChartSettingsTab({
+  chartPreviewError = null,
+  chartShareCode = "",
+  chartPreviewUrl = null,
+  variant = "desktop",
+}: {
+  chartPreviewError?: string | null;
+  chartShareCode?: string;
+  chartPreviewUrl?: string | null;
+  variant?: "desktop" | "mobile-app";
+}) {
   return renderToStaticMarkup(
     <ChartSettingsTab
       t={messages["zh-CN"]}
@@ -34,9 +44,9 @@ function renderChartSettingsTab(chartPreviewError: string | null) {
       onChartIncludeLegendChange={() => {}}
       chartIncludeQrCode={true}
       onChartIncludeQrCodeChange={() => {}}
-      chartPreviewUrl={null}
+      chartPreviewUrl={chartPreviewUrl}
       chartPreviewError={chartPreviewError}
-      chartShareCode=""
+      chartShareCode={chartShareCode}
       chartShareLinkCopied={false}
       chartShareCodeCopied={false}
       onCopyChartShareLink={() => {}}
@@ -46,20 +56,86 @@ function renderChartSettingsTab(chartPreviewError: string | null) {
       onExportChartShareQr={() => {}}
       onSaveChart={() => {}}
       saveBusy={false}
+      variant={variant}
     />,
   );
 }
 
 test("chart settings preview should show an inline error instead of the empty state when preview generation fails", () => {
-  const markup = renderChartSettingsTab("二维码生成失败");
+  const previewError = "二维码生成失败";
+  const markup = renderChartSettingsTab({ chartPreviewError: previewError });
 
-  expect(markup).toContain("二维码生成失败");
+  expect(markup).toContain(previewError);
   expect(markup).not.toContain(messages["zh-CN"].chartSettingsPreviewEmpty);
 });
 
 test("chart settings code title should keep a single-line label", () => {
-  const markup = renderChartSettingsTab(null);
+  const markup = renderChartSettingsTab({});
 
-  expect(markup).toContain("图纸码");
+  expect(markup).toContain(messages["zh-CN"].chartSettingsChartCode);
   expect(markup).toContain("whitespace-nowrap");
+});
+
+test("mobile chart settings should keep a fixed-height chart code text field under the actions", () => {
+  const markup = renderChartSettingsTab({
+    chartShareCode: "CODE-123",
+    variant: "mobile-app",
+  });
+
+  expect(markup).toContain(messages["zh-CN"].chartSettingsChartCode);
+  expect(markup).toContain(messages["zh-CN"].chartSettingsCopyChartCode);
+  expect(markup).toContain("CODE-123");
+  expect(markup).toContain("h-[88px] overflow-auto text-xs leading-5");
+});
+
+test("mobile chart settings preview should use a fixed 3:4 frame instead of sizing to chart height", () => {
+  const markup = renderChartSettingsTab({
+    variant: "mobile-app",
+  });
+
+  expect(markup).toContain("aspect-[3/4] w-full");
+});
+
+test("mobile chart settings preview image should stay centered inside the fixed frame", () => {
+  const mobileMarkup = renderChartSettingsTab({
+    variant: "mobile-app",
+    chartPreviewUrl: "https://example.com/chart.png",
+  });
+  const desktopMarkup = renderChartSettingsTab({
+    variant: "desktop",
+    chartPreviewUrl: "https://example.com/chart.png",
+  });
+
+  expect(mobileMarkup).toContain("object-contain object-center");
+  expect(desktopMarkup).toContain("object-contain object-left");
+});
+
+test("mobile chart settings should keep preview and chart code in the subtle group while the remaining groups use white backgrounds", () => {
+  const markup = renderChartSettingsTab({
+    variant: "mobile-app",
+  });
+
+  expect(markup).toContain('data-mobile-group-tone="subtle"');
+  expect(markup).toContain("border-stone-300 bg-[#f6efe2]");
+  expect((markup.match(/data-mobile-group-tone="plain"/g) ?? []).length).toBe(2);
+});
+
+test("mobile chart settings preview and chart code surfaces should keep the subtle background tone", () => {
+  const markup = renderChartSettingsTab({
+    variant: "mobile-app",
+  });
+
+  expect(markup).toContain('data-mobile-export-surface="preview"');
+  expect(markup).toContain('data-mobile-export-surface="chart-code"');
+  expect(markup).toContain("bg-[#faf4e9]");
+  expect(markup).not.toContain("data-mobile-export-surface=\"preview\" class=\"relative flex aspect-[3/4] w-full flex-none items-center justify-center overflow-hidden rounded-[16px] bg-white/65\"");
+  expect(markup).not.toContain("data-mobile-export-surface=\"chart-code\" class=\"h-[88px] overflow-auto text-xs leading-5 rounded-md border px-3 py-2 shadow-inner transition border-stone-300 bg-[#f6efe2] text-stone-800\"");
+});
+
+test("desktop chart settings preview panels should also use the softened export background", () => {
+  const markup = renderChartSettingsTab({
+    variant: "desktop",
+  });
+
+  expect(markup).toContain("border-stone-300 bg-[#f6efe2]");
 });
