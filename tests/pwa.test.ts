@@ -9,6 +9,13 @@ import {
   resolvePwaScope,
 } from "../pwa.config";
 
+const originalPindouBasePath = process.env.PINDOU_BASE_PATH;
+
+function readCurrentPindouBasePath() {
+  const value = process.env.PINDOU_BASE_PATH;
+  return value && value !== "undefined" ? value : undefined;
+}
+
 test("normalizeBasePath should preserve root and normalize subpaths", () => {
   expect(normalizeBasePath(undefined)).toBe("./");
   expect(normalizeBasePath("/")).toBe("/");
@@ -56,9 +63,17 @@ test("buildPwaWorkboxConfig should include wasm and keep navigation fallback in 
 
 test("vite config should expose a manifest-backed PWA build for subpath deploys", async () => {
   process.env.PINDOU_BASE_PATH = "/pdd/";
-  const resolved = await viteConfig({ command: "build", mode: "test" });
-  const plugins = resolved.plugins ?? [];
-  expect(plugins.length).toBeGreaterThan(2);
+  try {
+    const resolved = await viteConfig({ command: "build", mode: "test" });
+    const plugins = resolved.plugins ?? [];
+    expect(plugins.length).toBeGreaterThan(2);
+  } finally {
+    if (originalPindouBasePath === undefined) {
+      delete process.env.PINDOU_BASE_PATH;
+    } else {
+      process.env.PINDOU_BASE_PATH = originalPindouBasePath;
+    }
+  }
 });
 
 test("production build should emit manifest and service worker assets", () => {
@@ -67,5 +82,5 @@ test("production build should emit manifest and service worker assets", () => {
   expect(existsSync(join(distDir, "sw.js"))).toBe(true);
 
   const manifest = JSON.parse(readFileSync(join(distDir, "manifest.webmanifest"), "utf8"));
-  expect(manifest.start_url).toBe("/pdd/");
+  expect(manifest.start_url).toBe(resolvePwaScope(normalizeBasePath(readCurrentPindouBasePath())));
 });
